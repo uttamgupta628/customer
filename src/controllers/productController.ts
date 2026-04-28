@@ -26,7 +26,8 @@ const uploadBufferToCloudinary = (
         ],
       },
       (error, result) => {
-        if (error || !result) return reject(error ?? new Error("Cloudinary upload failed"));
+        if (error || !result)
+          return reject(error ?? new Error("Cloudinary upload failed"));
         resolve(result);
       }
     );
@@ -36,13 +37,13 @@ const uploadBufferToCloudinary = (
 };
 
 // ─── ADD SINGLE PRODUCT ────────────────────────────────────────────────────────
+// POST /api/products/single
 export const addSingleProduct = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    // 1. Validate body fields
     const parseResult = singleProductSchema.safeParse(req.body);
     if (!parseResult.success) {
       res.status(400).json({
@@ -55,7 +56,6 @@ export const addSingleProduct = async (
 
     const data = parseResult.data;
 
-    // 2. Upload image to Cloudinary if provided
     let imageUrl: string | undefined;
     let imagePublicId: string | undefined;
 
@@ -77,7 +77,6 @@ export const addSingleProduct = async (
       }
     }
 
-    // 3. Create & save product
     const product = new Product({
       name: data.name,
       brand: data.brand,
@@ -98,7 +97,6 @@ export const addSingleProduct = async (
     });
 
     await product.save();
-
     sendSuccess(res, "Product added successfully", product, 201);
   } catch (error) {
     next(error);
@@ -106,24 +104,30 @@ export const addSingleProduct = async (
 };
 
 // ─── BULK UPLOAD PRODUCTS ──────────────────────────────────────────────────────
+// POST /api/products/bulk
 export const bulkUploadProducts = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    // 1. Check file presence
     if (!req.file) {
       sendError(res, "No file uploaded. Please upload a CSV or Excel file.");
       return;
     }
 
-    // 2. Parse the file
     let rawRows: Record<string, string>[];
     try {
-      rawRows = parseFileBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
+      rawRows = parseFileBuffer(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname
+      );
     } catch {
-      sendError(res, "Failed to parse the uploaded file. Ensure it is a valid CSV or Excel file.");
+      sendError(
+        res,
+        "Failed to parse the uploaded file. Ensure it is a valid CSV or Excel file."
+      );
       return;
     }
 
@@ -132,9 +136,12 @@ export const bulkUploadProducts = async (
       return;
     }
 
-    // 3. Validate each row
     const validProducts: object[] = [];
-    const failedRows: { row: number; data: Record<string, string>; errors: unknown }[] = [];
+    const failedRows: {
+      row: number;
+      data: Record<string, string>;
+      errors: unknown;
+    }[] = [];
 
     for (let i = 0; i < rawRows.length; i++) {
       const row = rawRows[i];
@@ -161,7 +168,7 @@ export const bulkUploadProducts = async (
         });
       } else {
         failedRows.push({
-          row: i + 2, // row 1 = header; user-facing rows are 1-indexed
+          row: i + 2,
           data: row,
           errors:
             result.error instanceof ZodError
@@ -171,7 +178,6 @@ export const bulkUploadProducts = async (
       }
     }
 
-    // 4. Insert valid products
     let insertedProducts: object[] = [];
     if (validProducts.length > 0) {
       insertedProducts = await Product.insertMany(validProducts, {
@@ -179,7 +185,6 @@ export const bulkUploadProducts = async (
       });
     }
 
-    // 5. Respond with summary
     const responseData = {
       totalRows: rawRows.length,
       successCount: insertedProducts.length,
@@ -189,7 +194,12 @@ export const bulkUploadProducts = async (
     };
 
     if (failedRows.length > 0 && insertedProducts.length === 0) {
-      sendError(res, "All rows failed validation. No products were added.", responseData, 400);
+      sendError(
+        res,
+        "All rows failed validation. No products were added.",
+        responseData,
+        400
+      );
     } else if (failedRows.length > 0) {
       res.status(207).json({
         success: true,
@@ -210,6 +220,7 @@ export const bulkUploadProducts = async (
 };
 
 // ─── GET ALL PRODUCTS ──────────────────────────────────────────────────────────
+// GET /api/products
 export const getAllProducts = async (
   req: Request,
   res: Response,
@@ -236,7 +247,11 @@ export const getAllProducts = async (
     if (search) filter.$text = { $search: search as string };
 
     const [products, total] = await Promise.all([
-      Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
+      Product.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
       Product.countDocuments(filter),
     ]);
 
@@ -255,6 +270,7 @@ export const getAllProducts = async (
 };
 
 // ─── GET SINGLE PRODUCT ────────────────────────────────────────────────────────
+// GET /api/products/:id
 export const getProductById = async (
   req: Request,
   res: Response,
@@ -272,7 +288,253 @@ export const getProductById = async (
   }
 };
 
+// ─── UPDATE PRODUCT ────────────────────────────────────────────────────────────
+// PATCH /api/products/:id
+export const updateProduct = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    const {
+      name,
+      brand,
+      category,
+      subCategory,
+      sellingPrice,
+      originalPrice,
+      unit,
+      weightOrSize,
+      stockQuantity,
+      minOrderQuantity,
+      description,
+      tags,
+      isFastMoving,
+      isFeatured,
+    } = req.body;
+
+    if (name !== undefined) product.name = String(name).trim();
+    if (brand !== undefined) product.brand = String(brand).trim() || undefined;
+    if (category !== undefined)
+      product.category = String(category).trim().toLowerCase();
+    if (subCategory !== undefined)
+      product.subCategory = String(subCategory).trim().toLowerCase() || undefined;
+    if (weightOrSize !== undefined)
+      product.weightOrSize = String(weightOrSize).trim() || undefined;
+    if (description !== undefined)
+      product.description = String(description).trim() || undefined;
+
+    if (sellingPrice !== undefined) {
+      const p = parseFloat(sellingPrice);
+      if (isNaN(p) || p < 0) {
+        sendError(res, "sellingPrice must be a non-negative number");
+        return;
+      }
+      product.sellingPrice = p;
+    }
+    if (originalPrice !== undefined) {
+      const p = parseFloat(originalPrice);
+      if (isNaN(p) || p < 0) {
+        sendError(res, "originalPrice must be a non-negative number");
+        return;
+      }
+      product.originalPrice = p;
+    }
+    if (stockQuantity !== undefined) {
+      const q = parseInt(stockQuantity, 10);
+      if (isNaN(q) || q < 0) {
+        sendError(res, "stockQuantity must be a non-negative integer");
+        return;
+      }
+      product.stockQuantity = q;
+    }
+    if (minOrderQuantity !== undefined) {
+      const q = parseInt(minOrderQuantity, 10);
+      if (isNaN(q) || q < 1) {
+        sendError(res, "minOrderQuantity must be >= 1");
+        return;
+      }
+      product.minOrderQuantity = q;
+    }
+    if (unit !== undefined) {
+      const validUnits = ["kg", "g", "litre", "ml", "pack", "piece", "dozen", "box"];
+      if (!validUnits.includes(unit)) {
+        sendError(res, `unit must be one of: ${validUnits.join(", ")}`);
+        return;
+      }
+      product.unit = unit;
+    }
+    if (tags !== undefined) {
+      product.tags = String(tags)
+        .split(",")
+        .map((t: string) => t.trim())
+        .filter(Boolean);
+    }
+    if (isFastMoving !== undefined) {
+      product.isFastMoving =
+        isFastMoving === true ||
+        isFastMoving === "true" ||
+        isFastMoving === "yes";
+    }
+    if (isFeatured !== undefined) {
+      product.isFeatured =
+        isFeatured === true || isFeatured === "true" || isFeatured === "yes";
+    }
+
+    if (req.file?.buffer) {
+      if (product.imagePublicId) {
+        await cloudinary.uploader.destroy(product.imagePublicId).catch(() => null);
+      }
+      try {
+        const cloudResult = await uploadBufferToCloudinary(
+          req.file.buffer,
+          req.file.originalname
+        );
+        product.imageUrl = cloudResult.secure_url;
+        product.imagePublicId = cloudResult.public_id;
+      } catch (uploadErr) {
+        res.status(502).json({
+          success: false,
+          message: "New image upload failed. Other changes were not saved.",
+          errors: uploadErr instanceof Error ? uploadErr.message : uploadErr,
+        });
+        return;
+      }
+    }
+
+    await product.save();
+    sendSuccess(res, "Product updated successfully", product);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── UPDATE STEP SIZE ──────────────────────────────────────────────────────────
+// PATCH /api/products/:id/step
+export const updateStepSize = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const step = parseInt(req.body?.step, 10);
+    if (isNaN(step) || step < 1) {
+      sendError(res, "step must be a positive integer (minimum 1)");
+      return;
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    const previous = product.minOrderQuantity;
+    product.minOrderQuantity = step;
+    await product.save();
+
+    sendSuccess(res, "Step size updated successfully", {
+      _id: product._id,
+      name: product.name,
+      previousStep: previous,
+      newStep: step,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── REPLACE PRODUCT IMAGE ─────────────────────────────────────────────────────
+// PATCH /api/products/:id/image
+export const replaceProductImage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.file?.buffer) {
+      sendError(res, "No image file provided");
+      return;
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    if (product.imagePublicId) {
+      await cloudinary.uploader.destroy(product.imagePublicId).catch(() => null);
+    }
+
+    try {
+      const cloudResult = await uploadBufferToCloudinary(
+        req.file.buffer,
+        req.file.originalname
+      );
+      product.imageUrl = cloudResult.secure_url;
+      product.imagePublicId = cloudResult.public_id;
+    } catch (uploadErr) {
+      res.status(502).json({
+        success: false,
+        message: "Image upload to Cloudinary failed.",
+        errors: uploadErr instanceof Error ? uploadErr.message : uploadErr,
+      });
+      return;
+    }
+
+    await product.save();
+    sendSuccess(res, "Product image replaced successfully", {
+      _id: product._id,
+      name: product.name,
+      imageUrl: product.imageUrl,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── TOGGLE PRODUCT STATUS (soft delete / restore) ────────────────────────────
+// PATCH /api/products/:id/status
+export const toggleProductStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { isActive } = req.body as { isActive: boolean };
+    if (typeof isActive !== "boolean") {
+      sendError(res, "isActive must be a boolean");
+      return;
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    product.isActive = isActive;
+    await product.save();
+
+    sendSuccess(
+      res,
+      `Product ${isActive ? "restored" : "deactivated"} successfully`,
+      { _id: product._id, name: product.name, isActive: product.isActive }
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── DELETE PRODUCT ────────────────────────────────────────────────────────────
+// DELETE /api/products/:id
 export const deleteProduct = async (
   req: Request,
   res: Response,
@@ -285,7 +547,6 @@ export const deleteProduct = async (
       return;
     }
 
-    // Delete image from Cloudinary if it exists
     if (product.imagePublicId) {
       await cloudinary.uploader.destroy(product.imagePublicId).catch(() => null);
     }

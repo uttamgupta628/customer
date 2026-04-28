@@ -23,11 +23,12 @@ export interface IProduct extends Document {
   minOrderQuantity: number;
   description?: string;
   imageUrl?: string;
-  imagePublicId?: string; // Cloudinary public_id for deletion
+  imagePublicId?: string;
   tags: string[];
   isFastMoving: boolean;
   isFeatured: boolean;
   isActive: boolean;
+  alertAt?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,7 +98,7 @@ const ProductSchema = new Schema<IProduct>(
       type: String,
     },
     imagePublicId: {
-      type: String, 
+      type: String,
     },
     tags: {
       type: [String],
@@ -115,6 +116,10 @@ const ProductSchema = new Schema<IProduct>(
       type: Boolean,
       default: true,
     },
+    alertAt: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -130,5 +135,4 @@ ProductSchema.index({ isFastMoving: 1 });
 ProductSchema.index({ name: "text", brand: "text", description: "text" });
 
 const Product = mongoose.model<IProduct>("Product", ProductSchema);
-
 export default Product;

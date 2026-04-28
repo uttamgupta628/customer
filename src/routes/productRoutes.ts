@@ -4,13 +4,17 @@ import {
   bulkUploadProducts,
   getAllProducts,
   getProductById,
+  updateProduct,
+  updateStepSize,
+  replaceProductImage,
+  toggleProductStatus,
   deleteProduct,
 } from "../controllers/productController";
 import { uploadSingleImage, uploadBulkFile } from "../middlewares/upload";
 
 const router = Router();
 
-// ─── Helper to wrap multer errors in a clean JSON response ────────────────────
+// ─── Upload error wrapper ──────────────────────────────────────────────────────
 const handleUpload =
   (uploadMiddleware: RequestHandler) =>
   (req: Request, res: Response, next: NextFunction): void => {
@@ -26,27 +30,21 @@ const handleUpload =
     });
   };
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
+router.post("/single", handleUpload(uploadSingleImage as RequestHandler), addSingleProduct);
 
-router.post(
-  "/single",
-  handleUpload(uploadSingleImage as RequestHandler),
-  addSingleProduct
-);
-
-
-router.post(
-  "/bulk",
-  handleUpload(uploadBulkFile as RequestHandler),
-  bulkUploadProducts
-);
-
+router.post("/bulk", handleUpload(uploadBulkFile as RequestHandler), bulkUploadProducts);
 
 router.get("/", getAllProducts);
 
-
 router.get("/:id", getProductById);
 
+router.patch("/:id", handleUpload(uploadSingleImage as RequestHandler), updateProduct);
+
+router.patch("/:id/step", updateStepSize);
+
+router.patch("/:id/image", handleUpload(uploadSingleImage as RequestHandler), replaceProductImage);
+
+router.patch("/:id/status", toggleProductStatus);
 
 router.delete("/:id", deleteProduct);
 
