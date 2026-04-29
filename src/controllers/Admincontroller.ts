@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import Admin from "../models/Admin";
 import { sendSuccess, sendError } from "../utils/response";
+import User from "../models/Users";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "changeme_secret";
 const JWT_EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
@@ -11,7 +12,9 @@ export const ensureDefaultAdmin = async (): Promise<void> => {
   if (count === 0) {
     await Admin.create({ email: "admin@admin.com", password: "admin1234" });
     console.log(`[Admin] Default admin created → admin@admin.com`);
-    console.log(`[Admin] ⚠️  Change credentials immediately via the Settings page.`);
+    console.log(
+      `[Admin] ⚠️  Change credentials immediately via the Settings page.`,
+    );
   }
 };
 
@@ -20,10 +23,13 @@ export const ensureDefaultAdmin = async (): Promise<void> => {
 export const loginAdmin = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    const { email, password } = req.body as { email?: string; password?: string };
+    const { email, password } = req.body as {
+      email?: string;
+      password?: string;
+    };
 
     if (!email || !password) {
       sendError(res, "Email and password are required", undefined, 400);
@@ -53,10 +59,12 @@ export const loginAdmin = async (
 export const getAdminProfile = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    const admin = await Admin.findById((req as Request & { adminId: string }).adminId).select("-password");
+    const admin = await Admin.findById(
+      (req as Request & { adminId: string }).adminId,
+    ).select("-password");
     if (!admin) {
       sendError(res, "Admin not found", undefined, 404);
       return;
@@ -71,17 +79,27 @@ export const getAdminProfile = async (
 export const changeEmail = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    const { newEmail, password } = req.body as { newEmail?: string; password?: string };
+    const { newEmail, password } = req.body as {
+      newEmail?: string;
+      password?: string;
+    };
 
     if (!newEmail || !password) {
-      sendError(res, "New email and current password are required", undefined, 400);
+      sendError(
+        res,
+        "New email and current password are required",
+        undefined,
+        400,
+      );
       return;
     }
 
-    const admin = await Admin.findById((req as Request & { adminId: string }).adminId);
+    const admin = await Admin.findById(
+      (req as Request & { adminId: string }).adminId,
+    );
     if (!admin) {
       sendError(res, "Admin not found", undefined, 404);
       return;
@@ -92,7 +110,9 @@ export const changeEmail = async (
       return;
     }
 
-    const exists = await Admin.findOne({ email: newEmail.toLowerCase().trim() });
+    const exists = await Admin.findOne({
+      email: newEmail.toLowerCase().trim(),
+    });
     if (exists && String(exists._id) !== String(admin._id)) {
       sendError(res, "Email is already in use", undefined, 409);
       return;
@@ -118,7 +138,7 @@ export const changeEmail = async (
 export const changePassword = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body as {
@@ -138,11 +158,18 @@ export const changePassword = async (
     }
 
     if (newPassword.length < 8) {
-      sendError(res, "New password must be at least 8 characters", undefined, 400);
+      sendError(
+        res,
+        "New password must be at least 8 characters",
+        undefined,
+        400,
+      );
       return;
     }
 
-    const admin = await Admin.findById((req as Request & { adminId: string }).adminId);
+    const admin = await Admin.findById(
+      (req as Request & { adminId: string }).adminId,
+    );
     if (!admin) {
       sendError(res, "Admin not found", undefined, 404);
       return;
@@ -157,6 +184,89 @@ export const changePassword = async (
     await admin.save();
 
     sendSuccess(res, "Password updated successfully");
+  } catch (error) {
+    next(error);
+  }
+};
+// ─── GET ALL CUSTOMERS ────────────────────────────────────────────────────────
+// GET /api/admin/customers
+export const getCustomers = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { page = "1", limit = "50", search } = req.query;
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const limitNum = Math.min(200, parseInt(limit as string, 10));
+    const skip = (pageNum - 1) * limitNum;
+
+    // Filter: only customers (not admins)
+    const filter: Record<string, unknown> = { role: { $ne: "admin" } };
+
+    if (search && search !== "") {
+      const searchStr = search as string;
+      filter.$or = [
+        { "profile.contactName": { $regex: searchStr, $options: "i" } },
+        { phone: { $regex: searchStr, $options: "i" } },
+        { "profile.city": { $regex: searchStr, $options: "i" } },
+        { "profile.state": { $regex: searchStr, $options: "i" } },
+        { "profile.gstNumber": { $regex: searchStr, $options: "i" } },
+      ];
+    }
+
+    const [customers, total] = await Promise.all([
+      User.find(filter)
+        .select("-__v")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
+
+    sendSuccess(res, "Customers fetched successfully", {
+      customers,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── DEACTIVATE CUSTOMER ──────────────────────────────────────────────────────
+// PATCH /api/admin/customers/:id/deactivate
+export const deactivateCustomer = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+    if (!user) {
+      sendError(res, "Customer not found", undefined, 404);
+      return;
+    }
+
+    // Toggle active status
+    user.isActive = !user.isActive;
+    await user.save();
+
+    const action = user.isActive ? "activated" : "deactivated";
+
+    sendSuccess(res, `Customer ${action} successfully`, {
+      _id: user._id,
+      phone: user.phone,
+      isActive: user.isActive,
+      profile: user.profile,
+    });
   } catch (error) {
     next(error);
   }

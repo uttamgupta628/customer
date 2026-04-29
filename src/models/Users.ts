@@ -25,6 +25,14 @@ interface IUser extends Document {
   // Profile (filled at signup step 3)
   profile: IProfile;
 
+  // Push tokens
+  pushTokens?: {
+    token?: string;
+    platform?: "ios" | "android";
+    device?: string;
+    createdAt?: Date;
+  }[];
+
   // Account Status
   approvalStatus: "auto" | "manual" | "approved" | "rejected" | "pending";
   isProfileComplete: boolean;
@@ -44,6 +52,15 @@ const validateGST = (v: string): boolean => {
 // ─── Schema Definition ──────────────────────────────────────────────────────
 const UserSchema = new mongoose.Schema<IUser>(
   {
+    // Add these fields to UserSchema
+    pushTokens: [
+      {
+        token: { type: String },
+        platform: { type: String, enum: ["ios", "android"] },
+        device: { type: String },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
     // ── Auth ──────────────────────────────────────────
     phone: {
       type: String,

@@ -76,13 +76,16 @@ const RESEND_COOLDOWN_SECONDS: number = 30;
 
 // ─── Helper: sign JWT ─────────────────────────────────────────────────────────
 // Replace the existing signToken with this:
+// ─── Helper: sign JWT ─────────────────────────────────────────────────────────
 const signToken = (userId: Types.ObjectId): string => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET is not set.");
   }
+
+  // ✅ Fix: Use proper typing for expiresIn
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "30d",
-  });
+    expiresIn: (process.env.JWT_EXPIRES_IN || "30d") as string | number,
+  } as jwt.SignOptions);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -455,7 +458,7 @@ interface UpdateProfileBody {
   pincode?: string;
   gstNumber?: string;
 }
- 
+
 // [6] UPDATE PROFILE
 // PUT /auth/profile
 // Protected: requires Bearer token
@@ -465,9 +468,11 @@ const updateProfile = async (
 ): Promise<Response> => {
   try {
     if (!req.user) {
-      return res.status(401).json({ success: false, message: "User not authenticated" });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
     }
- 
+
     const {
       contactName,
       addressLine1,
@@ -477,61 +482,69 @@ const updateProfile = async (
       pincode,
       gstNumber = "",
     } = req.body as UpdateProfileBody;
- 
+
     // ── Validate required fields ──
     const missing: string[] = [];
     if (!contactName?.trim()) missing.push("contactName");
     if (!addressLine1?.trim()) missing.push("addressLine1");
-    if (!city?.trim())         missing.push("city");
-    if (!state?.trim())        missing.push("state");
-    if (!pincode?.trim())      missing.push("pincode");
- 
+    if (!city?.trim()) missing.push("city");
+    if (!state?.trim()) missing.push("state");
+    if (!pincode?.trim()) missing.push("pincode");
+
     if (missing.length > 0) {
-      return res.status(400).json({ success: false, message: "Required fields missing.", missing });
+      return res
+        .status(400)
+        .json({ success: false, message: "Required fields missing.", missing });
     }
- 
+
     // ── Validate pincode ──
     if (!/^\d{6}$/.test(pincode!.trim())) {
-      return res.status(400).json({ success: false, message: "Pincode must be 6 digits." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Pincode must be 6 digits." });
     }
- 
+
     // ── Validate GST if provided ──
     const gstTrimmed = gstNumber.trim().toUpperCase();
     if (gstTrimmed && !isGstValid(gstTrimmed)) {
-      return res.status(400).json({ success: false, message: "Invalid GST number format." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid GST number format." });
     }
- 
+
     // ── Update only profile fields — don't touch approvalStatus or isProfileComplete ──
     const user = await User.findByIdAndUpdate(
       req.user._id,
       {
         $set: {
-          "profile.contactName":  contactName!.trim(),
+          "profile.contactName": contactName!.trim(),
           "profile.addressLine1": addressLine1!.trim(),
           "profile.addressLine2": addressLine2.trim(),
-          "profile.city":         city!.trim(),
-          "profile.state":        state!.trim(),
-          "profile.pincode":      pincode!.trim(),
-          "profile.gstNumber":    gstTrimmed,
+          "profile.city": city!.trim(),
+          "profile.state": state!.trim(),
+          "profile.pincode": pincode!.trim(),
+          "profile.gstNumber": gstTrimmed,
         },
       },
       { new: true, runValidators: true },
     );
- 
+
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
     }
- 
+
     return res.status(200).json({
       success: true,
       message: "Profile updated successfully.",
       user: {
-        id:                user._id,
-        phone:             user.phone,
-        role:              user.role,
+        id: user._id,
+        phone: user.phone,
+        role: user.role,
         isProfileComplete: user.isProfileComplete,
-        approvalStatus:    user.approvalStatus,
-        profile:           user.profile,
+        approvalStatus: user.approvalStatus,
+        profile: user.profile,
       },
     });
   } catch (err: any) {
@@ -539,11 +552,83 @@ const updateProfile = async (
     if (err.name === "ValidationError") {
       return res.status(400).json({
         success: false,
-        message: Object.values(err.errors).map((e: any) => e.message).join(", "),
+        message: Object.values(err.errors)
+          .map((e: any) => e.message)
+          .join(", "),
       });
     }
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
+// ─── SAVE PUSH TOKEN ─────────────────────────────────────────────────────────
+const savePushToken = async (
+  req: CustomRequest,
+  res: Response,
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
-export { checkPhone, sendOtpHandler, verifyOtpHandler, completeProfile, getMe, updateProfile };
+    const { pushToken, platform, device } = req.body;
+
+    if (!pushToken) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Push token required" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Check if token already exists
+    const existingIndex = (user.pushTokens || []).findIndex(
+      (t: any) => t.token === pushToken,
+    );
+
+    if (existingIndex > -1) {
+      // Update existing token
+      (user.pushTokens as any)[existingIndex] = {
+        token: pushToken,
+        platform: platform || "unknown",
+        device: device || "Unknown",
+        createdAt: new Date(),
+      };
+    } else {
+      // Add new token
+      user.pushTokens = [
+        ...(user.pushTokens || []),
+        {
+          token: pushToken,
+          platform: platform || "unknown",
+          device: device || "Unknown",
+          createdAt: new Date(),
+        },
+      ];
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Push token saved",
+    });
+  } catch (err) {
+    console.error("[savePushToken]", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export {
+  checkPhone,
+  sendOtpHandler,
+  verifyOtpHandler,
+  completeProfile,
+  getMe,
+  updateProfile,
+  savePushToken,
+};

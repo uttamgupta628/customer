@@ -1,3 +1,4 @@
+// routes/Orderroutes.ts
 import { Router } from "express";
 import {
   placeOrder,
@@ -7,18 +8,19 @@ import {
   updateOrderStatus,
   getAllOrders,
 } from "../controllers/Ordercontroller";
-import { authenticate, requireAdmin } from "../middlewares/authMiddleware"; // adjust path to your auth middleware
+import { protect } from "../middlewares/authMiddleware";
+import { adminAuth } from "../middlewares/adminAuth";
 
 const router = Router();
 
-// ── Customer routes (JWT required) ───────────────────────────────────────────
-router.post("/", authenticate, placeOrder);              // Place a new order
-router.get("/my", authenticate, getMyOrders);            // My orders list
-router.get("/:id", authenticate, getOrderById);          // Single order detail
-router.patch("/:id/cancel", authenticate, cancelOrder);  // Cancel my order
+// Customer routes (User JWT)
+router.post("/", protect, placeOrder);
+router.get("/my", protect, getMyOrders);
+router.get("/:id", protect, getOrderById);
+router.patch("/:id/cancel", protect, cancelOrder);
 
-// ── Admin routes ──────────────────────────────────────────────────────────────
-router.get("/", authenticate, requireAdmin, getAllOrders);                     // All orders
-router.patch("/:id/status", authenticate, requireAdmin, updateOrderStatus);   // Update status
+// Admin routes (Admin JWT) - Use adminAuth instead of protect
+router.get("/", adminAuth, getAllOrders); // ✅ Changed
+router.patch("/:id/status", adminAuth, updateOrderStatus); // ✅ Changed
 
 export default router;
