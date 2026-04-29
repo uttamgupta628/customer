@@ -8,6 +8,7 @@ import productRoutes from "./routes/productRoutes";
 import stockRoutes from "./routes/Stockroutes";
 import adminRoutes from "./routes/adminRoutes";
 import authRoutes from "./routes/authRoutes";
+import orderRoutes from "./routes/Orderroutes";
 import { ensureDefaultAdmin } from "./controllers/Admincontroller";
 import { errorHandler } from "./middlewares/errorHandler";
 
@@ -31,7 +32,8 @@ app.get("/", (_req: Request, res: Response) => {
 app.use("/api/products", productRoutes);
 app.use("/api/stocks", stockRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/auth", authRoutes); 
+app.use("/api/orders", orderRoutes); // ✅ Make sure this line exists!
+app.use("/auth", authRoutes);
 
 app.use(errorHandler);
 

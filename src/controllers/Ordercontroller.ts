@@ -2,13 +2,14 @@ import { Request, Response, NextFunction } from "express";
 import Order, { OrderStatus } from "../models/Order";
 import Product from "../models/Product";
 import { sendSuccess, sendError } from "../utils/response";
+import { sendPushNotification } from "../utils/pushNotification";
 
 // ─── Helper: validate & enrich items from DB ──────────────────────────────────
 const enrichAndValidateItems = async (
   rawItems: {
     productId: string;
     quantity: number;
-  }[]
+  }[],
 ) => {
   const enriched = [];
   const errors: string[] = [];
@@ -30,7 +31,7 @@ const enrichAndValidateItems = async (
     }
     if (product.stockQuantity < raw.quantity) {
       errors.push(
-        `Insufficient stock for "${product.name}". Available: ${product.stockQuantity}`
+        `Insufficient stock for "${product.name}". Available: ${product.stockQuantity}`,
       );
       continue;
     }
@@ -57,7 +58,7 @@ const enrichAndValidateItems = async (
 export const placeOrder = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const customerId = (req as any).user?._id;
@@ -92,10 +93,17 @@ export const placeOrder = async (
 
     const { contactName, addressLine1, city, state, pincode, phone } =
       deliveryAddress;
-    if (!contactName || !addressLine1 || !city || !state || !pincode || !phone) {
+    if (
+      !contactName ||
+      !addressLine1 ||
+      !city ||
+      !state ||
+      !pincode ||
+      !phone
+    ) {
       sendError(
         res,
-        "Delivery address must include: contactName, addressLine1, city, state, pincode, phone"
+        "Delivery address must include: contactName, addressLine1, city, state, pincode, phone",
       );
       return;
     }
@@ -136,7 +144,7 @@ export const placeOrder = async (
         res,
         `Minimum order value is ₹${MIN_ORDER}. Current subtotal is ₹${subtotal}.`,
         undefined,
-        400
+        400,
       );
       return;
     }
@@ -168,7 +176,11 @@ export const placeOrder = async (
       status: "confirmed",
       statusHistory: [
         { status: "pending", timestamp: new Date(), note: "Order placed" },
-        { status: "confirmed", timestamp: new Date(), note: "Payment received" },
+        {
+          status: "confirmed",
+          timestamp: new Date(),
+          note: "Payment received",
+        },
       ],
     });
 
@@ -179,14 +191,14 @@ export const placeOrder = async (
       enriched.map((item) =>
         Product.findByIdAndUpdate(item.product, {
           $inc: { stockQuantity: -item.quantity },
-        })
-      )
+        }),
+      ),
     );
 
     // Populate for response
     const populated = await Order.findById(order._id).populate(
       "customer",
-      "phone profile.contactName"
+      "phone profile.contactName",
     );
 
     sendSuccess(res, "Order placed successfully", populated, 201);
@@ -200,7 +212,7 @@ export const placeOrder = async (
 export const getMyOrders = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const customerId = (req as any).user?._id;
@@ -245,7 +257,7 @@ export const getMyOrders = async (
 export const getOrderById = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const customerId = (req as any).user?._id;
@@ -280,7 +292,7 @@ export const getOrderById = async (
 export const cancelOrder = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const customerId = (req as any).user?._id;
@@ -307,7 +319,7 @@ export const cancelOrder = async (
         res,
         `Cannot cancel an order that is "${order.status}"`,
         undefined,
-        400
+        400,
       );
       return;
     }
@@ -317,8 +329,8 @@ export const cancelOrder = async (
       order.items.map((item) =>
         Product.findByIdAndUpdate(item.product, {
           $inc: { stockQuantity: item.quantity },
-        })
-      )
+        }),
+      ),
     );
 
     order.status = "cancelled";
@@ -342,33 +354,18 @@ export const cancelOrder = async (
 export const updateOrderStatus = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
-    const { status, note } = req.body as { status: OrderStatus; note?: string };
-
-    const validStatuses: OrderStatus[] = [
-      "pending",
-      "confirmed",
-      "processing",
-      "out_for_delivery",
-      "delivered",
-      "cancelled",
-    ];
-    if (!validStatuses.includes(status)) {
-      sendError(
-        res,
-        `Invalid status. Must be one of: ${validStatuses.join(", ")}`
-      );
-      return;
-    }
-
+    const { status, note } = req.body;
     const order = await Order.findById(req.params.id);
+
     if (!order) {
       sendError(res, "Order not found", undefined, 404);
       return;
     }
 
+    const previousStatus = order.status;
     order.status = status;
     order.statusHistory.push({
       status,
@@ -376,15 +373,29 @@ export const updateOrderStatus = async (
       note: note || `Status updated to ${status}`,
     });
 
-    if (status === "delivered") {
-      order.deliveredAt = new Date();
-      order.paymentStatus = "paid";
-    }
-    if (status === "cancelled") {
-      order.cancelledAt = new Date();
-    }
-
     await order.save();
+
+    // ✅ Send push notification to customer
+    const statusLabels: Record<string, string> = {
+      confirmed: "Confirmed ✅",
+      processing: "Processing 📦",
+      out_for_delivery: "Out for Delivery 🚚",
+      delivered: "Delivered 📬",
+      cancelled: "Cancelled ❌",
+    };
+
+    const title = "Order Status Updated";
+    const body = `Your order ${order.orderNumber} is now ${statusLabels[status] || status}.`;
+
+    await sendPushNotification(order.customer.toString(), title, body, {
+      type: "order_status_update",
+      orderId: order._id.toString(),
+      orderNumber: order.orderNumber,
+      status: status,
+      previousStatus: previousStatus,
+      screen: "/(tabs)/myorders",
+    });
+
     sendSuccess(res, "Order status updated", order);
   } catch (error) {
     next(error);
@@ -396,7 +407,7 @@ export const updateOrderStatus = async (
 export const getAllOrders = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const {
