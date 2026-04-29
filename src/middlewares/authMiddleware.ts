@@ -1,11 +1,9 @@
-// middleware/auth.ts
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/Users";
 
 export interface AuthRequest extends Request {
   user?: any;
-  adminId?: string;
 }
 
 export const protect = async (
@@ -25,11 +23,13 @@ export const protect = async (
     }
 
     const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as {
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
       id: string;
     };
 
     const user = await User.findById(decoded.id).select("-__v");
+
     if (!user) {
       res.status(401).json({
         success: false,

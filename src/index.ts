@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "dotenv/config"; // ← this alone is enough, keep it FIRST
+
 import express, { Request, Response } from "express";
 import cors from "cors";
 import connectDB from "./config/db";
@@ -6,12 +7,16 @@ import "./config/cloudinary";
 import productRoutes from "./routes/productRoutes";
 import stockRoutes from "./routes/Stockroutes";
 import adminRoutes from "./routes/adminRoutes";
+import authRoutes from "./routes/authRoutes";
 import { ensureDefaultAdmin } from "./controllers/Admincontroller";
 import { errorHandler } from "./middlewares/errorHandler";
-import authRoutes from "./routes/authRoutes";
 
 const app = express();
 const PORT = process.env.PORT ?? 5000;
+
+if (!process.env.JWT_SECRET) {
+  throw new Error("FATAL: JWT_SECRET is not set. Check your .env file.");
+}
 
 connectDB().then(() => ensureDefaultAdmin());
 
@@ -26,7 +31,7 @@ app.get("/", (_req: Request, res: Response) => {
 app.use("/api/products", productRoutes);
 app.use("/api/stocks", stockRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/auth", authRoutes);
+app.use("/auth", authRoutes); 
 
 app.use(errorHandler);
 

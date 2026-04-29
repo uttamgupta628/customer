@@ -5,13 +5,13 @@ import {
   changeEmail,
   changePassword,
 } from "../controllers/Admincontroller";
-import { authMiddleware } from "../middlewares/authMiddleware";
+import { protect } from "../middlewares/authMiddleware";
 
 const router = Router();
 
-router.post("/login",       loginAdmin);
-router.get("/profile",      authMiddleware, getAdminProfile);
-router.patch("/email",      authMiddleware, changeEmail);
-router.patch("/password",   authMiddleware, changePassword);
+router.post("/login", loginAdmin);
+router.get("/profile", protect, getAdminProfile);
+router.patch("/email", protect, changeEmail);
+router.patch("/password", protect, changePassword);
 
 export default router;
