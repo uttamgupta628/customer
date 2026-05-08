@@ -455,7 +455,10 @@ export const getAllOrders = async (
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
-        .populate("customer", "phone profile.contactName")
+        .populate(
+          "customer",
+          "phone profile.contactName profile.addressLine1 profile.addressLine2 profile.city profile.state profile.pincode profile.gstNumber",
+        )
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)

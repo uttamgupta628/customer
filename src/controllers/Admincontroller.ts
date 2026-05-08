@@ -466,3 +466,88 @@ export const getCustomerById = async (
     next(error);
   }
 };
+
+// ─── SEND MANUAL PUSH NOTIFICATION ────────────────────────────────────────────
+// POST /api/admin/send-push
+export const sendManualPush = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { title, body, targetType, selectedUsers, screen } = req.body;
+
+    if (!title || !body) {
+      sendError(res, "Title and body are required", undefined, 400);
+      return;
+    }
+
+    let targetUsers: any[] = [];
+
+    // Determine target users based on type
+    switch (targetType) {
+      case "all":
+        targetUsers = await User.find({
+          role: "customer",
+          isActive: true,
+        }).lean();
+        break;
+      case "pending":
+        targetUsers = await User.find({
+          role: "customer",
+          approvalStatus: { $in: ["pending", "manual"] },
+          isActive: true,
+        }).lean();
+        break;
+      case "approved":
+        targetUsers = await User.find({
+          role: "customer",
+          approvalStatus: { $in: ["approved", "auto"] },
+          isActive: true,
+        }).lean();
+        break;
+      case "specific":
+        if (
+          !selectedUsers ||
+          !Array.isArray(selectedUsers) ||
+          selectedUsers.length === 0
+        ) {
+          sendError(res, "No users selected", undefined, 400);
+          return;
+        }
+        targetUsers = await User.find({
+          _id: { $in: selectedUsers },
+          role: "customer",
+          isActive: true,
+        }).lean();
+        break;
+      default:
+        targetUsers = await User.find({
+          role: "customer",
+          isActive: true,
+        }).lean();
+    }
+
+    let sentCount = 0;
+
+    // Send push to each user
+    for (const user of targetUsers) {
+      try {
+        await sendPushNotification(user._id.toString(), title, body, {
+          type: "manual_broadcast",
+          screen: screen || undefined,
+        });
+        sentCount++;
+      } catch (err) {
+        console.error(`Failed to send push to user ${user._id}:`, err);
+      }
+    }
+
+    sendSuccess(res, `Notification sent to ${sentCount} user(s)`, {
+      sentCount,
+      totalTargets: targetUsers.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

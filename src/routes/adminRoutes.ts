@@ -11,6 +11,7 @@ import {
   activateCustomer,
   deactivateCustomer,
   deleteCustomer,
+  sendManualPush,
 } from "../controllers/Admincontroller";
 import { adminAuth } from "../middlewares/adminAuth";
 
@@ -32,5 +33,6 @@ router.patch("/customers/:id/reject", adminAuth, rejectCustomer); // Reject
 router.patch("/customers/:id/activate", adminAuth, activateCustomer); // Activate
 router.patch("/customers/:id/deactivate", adminAuth, deactivateCustomer); // Deactivate
 router.delete("/customers/:id", adminAuth, deleteCustomer); // Delete
+router.post("/send-push", adminAuth, sendManualPush);
 
 export default router;
