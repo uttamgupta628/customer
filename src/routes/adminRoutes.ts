@@ -5,7 +5,12 @@ import {
   changeEmail,
   changePassword,
   getCustomers,
+  getCustomerById,
+  approveCustomer,
+  rejectCustomer,
+  activateCustomer,
   deactivateCustomer,
+  deleteCustomer,
 } from "../controllers/Admincontroller";
 import { adminAuth } from "../middlewares/adminAuth";
 
@@ -21,6 +26,11 @@ router.patch("/password", adminAuth, changePassword);
 
 // ── Customer Management ───────────────────────────────────────────────────────
 router.get("/customers", adminAuth, getCustomers);
-router.patch("/customers/:id/deactivate", adminAuth, deactivateCustomer);
+router.get("/customers/:id", adminAuth, getCustomerById); // GET single customer
+router.patch("/customers/:id/approve", adminAuth, approveCustomer); // Approve
+router.patch("/customers/:id/reject", adminAuth, rejectCustomer); // Reject
+router.patch("/customers/:id/activate", adminAuth, activateCustomer); // Activate
+router.patch("/customers/:id/deactivate", adminAuth, deactivateCustomer); // Deactivate
+router.delete("/customers/:id", adminAuth, deleteCustomer); // Delete
 
 export default router;
