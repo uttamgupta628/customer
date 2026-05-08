@@ -6,9 +6,22 @@ export interface IOrderItem {
   product: mongoose.Types.ObjectId;
   name: string;
   brand?: string;
+  category?: string;
+  type?: string;
+  color?: string;
+  warranty?: string;
   imageUrl?: string;
-  unit: string;
-  weightOrSize?: string;
+  images?: {
+    url: string;
+    publicId: string;
+    isPrimary: boolean;
+    altText?: string;
+  }[];
+  specifications?: Record<string, string>;
+  compatibility?: string[];
+  dimensions?: string;
+  weight?: string;
+  material?: string;
   sellingPrice: number;
   originalPrice?: number;
   quantity: number;
@@ -83,15 +96,30 @@ const OrderItemSchema = new Schema<IOrderItem>(
     },
     name: { type: String, required: true, trim: true },
     brand: { type: String, trim: true },
+    category: { type: String, trim: true },
+    type: { type: String, trim: true },
+    color: { type: String, trim: true },
+    warranty: { type: String, trim: true },
     imageUrl: { type: String },
-    unit: { type: String, required: true },
-    weightOrSize: { type: String },
+    images: [
+      {
+        url: { type: String },
+        publicId: { type: String },
+        isPrimary: { type: Boolean, default: false },
+        altText: { type: String },
+      },
+    ],
+    specifications: { type: Map, of: String },
+    compatibility: [{ type: String, trim: true }],
+    dimensions: { type: String, trim: true },
+    weight: { type: String, trim: true },
+    material: { type: String, trim: true },
     sellingPrice: { type: Number, required: true, min: 0 },
     originalPrice: { type: Number, min: 0 },
     quantity: { type: Number, required: true, min: 1 },
     lineTotal: { type: Number, required: true, min: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const OrderAddressSchema = new Schema<IOrderAddress>(
@@ -104,20 +132,27 @@ const OrderAddressSchema = new Schema<IOrderAddress>(
     pincode: { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const StatusHistorySchema = new Schema(
   {
     status: {
       type: String,
-      enum: ["pending", "confirmed", "processing", "out_for_delivery", "delivered", "cancelled"],
+      enum: [
+        "pending",
+        "confirmed",
+        "processing",
+        "out_for_delivery",
+        "delivered",
+        "cancelled",
+      ],
       required: true,
     },
     timestamp: { type: Date, default: Date.now },
     note: { type: String, trim: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 // ─── Counter for order number generation ─────────────────────────────────────
@@ -126,7 +161,8 @@ const CounterSchema = new Schema({
   _id: { type: String, required: true },
   seq: { type: Number, default: 0 },
 });
-const Counter = mongoose.models.Counter || mongoose.model("Counter", CounterSchema);
+const Counter =
+  mongoose.models.Counter || mongoose.model("Counter", CounterSchema);
 
 // ─── Main Order Schema ────────────────────────────────────────────────────────
 
@@ -182,7 +218,14 @@ const OrderSchema = new Schema<IOrder>(
     // ── Status ──
     status: {
       type: String,
-      enum: ["pending", "confirmed", "processing", "out_for_delivery", "delivered", "cancelled"],
+      enum: [
+        "pending",
+        "confirmed",
+        "processing",
+        "out_for_delivery",
+        "delivered",
+        "cancelled",
+      ],
       default: "pending",
       index: true,
     },
@@ -202,7 +245,7 @@ const OrderSchema = new Schema<IOrder>(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // ─── Auto-generate order number ───────────────────────────────────────────────
@@ -213,7 +256,7 @@ OrderSchema.pre("save", async function (next) {
     const counter = await Counter.findByIdAndUpdate(
       "orderNumber",
       { $inc: { seq: 1 } },
-      { new: true, upsert: true }
+      { new: true, upsert: true },
     );
     const padded = String(counter.seq).padStart(6, "0");
     this.orderNumber = `ORD-${padded}`;

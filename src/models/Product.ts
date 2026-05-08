@@ -1,29 +1,31 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-export type ProductUnit =
-  | "kg"
-  | "g"
-  | "litre"
-  | "ml"
-  | "pack"
-  | "piece"
-  | "dozen"
-  | "box";
+export interface IProductImage {
+  url: string;
+  publicId: string;
+  isPrimary: boolean;
+  altText?: string;
+}
 
 export interface IProduct extends Document {
   name: string;
   brand?: string;
   category: string;
   subCategory?: string;
+  type?: string; // e.g., "wired", "wireless", "bluetooth", "USB-C"
+  compatibility?: string[]; // e.g., ["iPhone 15", "Android", "Laptop"]
   sellingPrice: number;
   originalPrice?: number;
-  unit: ProductUnit;
-  weightOrSize?: string;
+  color?: string;
+  material?: string;
+  dimensions?: string; // e.g., "10x5x2 cm"
+  weight?: string; // e.g., "150g"
+  warranty?: string; // e.g., "1 Year", "6 Months"
   stockQuantity: number;
   minOrderQuantity: number;
   description?: string;
-  imageUrl?: string;
-  imagePublicId?: string;
+  specifications?: Map<string, string>; // Key-value specs like {"Cable Length": "1.2m", "Connector": "USB-C"}
+  images: IProductImage[];
   tags: string[];
   isFastMoving: boolean;
   isFeatured: boolean;
@@ -32,6 +34,16 @@ export interface IProduct extends Document {
   createdAt: Date;
   updatedAt: Date;
 }
+
+const ProductImageSchema = new Schema<IProductImage>(
+  {
+    url: { type: String, required: true },
+    publicId: { type: String, required: true },
+    isPrimary: { type: Boolean, default: false },
+    altText: { type: String },
+  },
+  { _id: true },
+);
 
 const ProductSchema = new Schema<IProduct>(
   {
@@ -56,6 +68,14 @@ const ProductSchema = new Schema<IProduct>(
       trim: true,
       lowercase: true,
     },
+    type: {
+      type: String,
+      trim: true,
+    },
+    compatibility: {
+      type: [String],
+      default: [],
+    },
     sellingPrice: {
       type: Number,
       required: [true, "Selling price is required"],
@@ -65,16 +85,23 @@ const ProductSchema = new Schema<IProduct>(
       type: Number,
       min: [0, "Original price cannot be negative"],
     },
-    unit: {
+    color: {
       type: String,
-      required: [true, "Unit is required"],
-      enum: {
-        values: ["kg", "g", "litre", "ml", "pack", "piece", "dozen", "box"],
-        message: "Invalid unit. Allowed: kg, g, litre, ml, pack, piece, dozen, box",
-      },
-      default: "pack",
+      trim: true,
     },
-    weightOrSize: {
+    material: {
+      type: String,
+      trim: true,
+    },
+    dimensions: {
+      type: String,
+      trim: true,
+    },
+    weight: {
+      type: String,
+      trim: true,
+    },
+    warranty: {
       type: String,
       trim: true,
     },
@@ -92,13 +119,22 @@ const ProductSchema = new Schema<IProduct>(
     description: {
       type: String,
       trim: true,
-      maxlength: [2000, "Description cannot exceed 2000 characters"],
+      maxlength: [3000, "Description cannot exceed 3000 characters"],
     },
-    imageUrl: {
-      type: String,
+    specifications: {
+      type: Map,
+      of: String,
+      default: new Map(),
     },
-    imagePublicId: {
-      type: String,
+    images: {
+      type: [ProductImageSchema],
+      default: [],
+      validate: {
+        validator: function (images: IProductImage[]) {
+          return images.length <= 8;
+        },
+        message: "Maximum 8 images allowed",
+      },
     },
     tags: {
       type: [String],
@@ -125,14 +161,27 @@ const ProductSchema = new Schema<IProduct>(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for common queries
 ProductSchema.index({ category: 1, subCategory: 1 });
+ProductSchema.index({ brand: 1 });
 ProductSchema.index({ isFeatured: 1 });
 ProductSchema.index({ isFastMoving: 1 });
-ProductSchema.index({ name: "text", brand: "text", description: "text" });
+ProductSchema.index({
+  name: "text",
+  brand: "text",
+  description: "text",
+  tags: "text",
+});
+ProductSchema.index({ compatibility: 1 });
+
+// Virtual for primary image URL
+ProductSchema.virtual("primaryImage").get(function (this: IProduct) {
+  const primary = this.images.find((img) => img.isPrimary);
+  return primary ? primary.url : this.images[0]?.url || null;
+});
 
 const Product = mongoose.model<IProduct>("Product", ProductSchema);
 export default Product;

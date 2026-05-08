@@ -1,4 +1,3 @@
-// routes/Orderroutes.ts
 import { Router } from "express";
 import {
   placeOrder,
@@ -19,8 +18,8 @@ router.get("/my", protect, getMyOrders);
 router.get("/:id", protect, getOrderById);
 router.patch("/:id/cancel", protect, cancelOrder);
 
-// Admin routes (Admin JWT) - Use adminAuth instead of protect
-router.get("/", adminAuth, getAllOrders); // ✅ Changed
-router.patch("/:id/status", adminAuth, updateOrderStatus); // ✅ Changed
+// Admin routes (Admin JWT)
+router.get("/", adminAuth, getAllOrders);
+router.patch("/:id/status", adminAuth, updateOrderStatus);
 
 export default router;

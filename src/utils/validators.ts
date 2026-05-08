@@ -1,6 +1,84 @@
 import { z } from "zod";
 
-const VALID_UNITS = ["kg", "g", "litre", "ml", "pack", "piece", "dozen", "box"] as const;
+// ─── Constants ────────────────────────────────────────────────────────────────
+export const CATEGORIES = [
+  "charging-cables",
+  "chargers-adapters",
+  "power-banks",
+  "headphones-earphones",
+  "speakers",
+  "screen-protectors",
+  "cases-covers",
+  "mounts-stands",
+  "cables-connectors",
+  "storage-devices",
+  "gaming-accessories",
+  "smartwatch-accessories",
+  "keyboard-mouse",
+  "webcam-microphone",
+  "other-accessories",
+] as const;
+
+export const VALID_COLORS = [
+  "Black",
+  "White",
+  "Silver",
+  "Gold",
+  "Rose Gold",
+  "Blue",
+  "Red",
+  "Green",
+  "Purple",
+  "Grey",
+  "Navy",
+  "Transparent",
+  "Multicolor",
+] as const;
+
+export const VALID_MATERIALS = [
+  "Silicone",
+  "Plastic",
+  "Metal",
+  "Aluminum",
+  "Platinum",
+  "Rubber",
+  "Leather",
+  "Fabric",
+  "TPU",
+  "Polycarbonate",
+  "Glass",
+  "Ceramic",
+  "Braided Nylon",
+  "ABS",
+  "Zinc Alloy",
+] as const;
+
+export const WARRANTY_OPTIONS = [
+  "No Warranty",
+  "3 Months",
+  "6 Months",
+  "1 Year",
+  "2 Years",
+  "3 Years",
+  "5 Years",
+  "Lifetime",
+] as const;
+
+export const COMPATIBILITY_OPTIONS = [
+  "iPhone 15",
+  "iPhone 14",
+  "iPhone 13",
+  "iPhone 12",
+  "iPhone 11",
+  "Android USB-C",
+  "Android Micro USB",
+  "iPad",
+  "MacBook",
+  "Laptop USB-C",
+  "Gaming Console",
+  "Smartwatch",
+  "Universal",
+] as const;
 
 // ─── Single Product Schema ─────────────────────────────────────────────────────
 export const singleProductSchema = z.object({
@@ -8,24 +86,48 @@ export const singleProductSchema = z.object({
   brand: z.string().optional(),
   category: z.string().min(1, "Category is required"),
   subCategory: z.string().optional(),
+  type: z.string().optional(),
+  compatibility: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v
+        ? v
+            .split(",")
+            .map((c) => c.trim())
+            .filter(Boolean)
+        : [],
+    ),
   sellingPrice: z
     .string()
     .or(z.number())
     .transform((v) => parseFloat(String(v)))
-    .refine((v) => !isNaN(v) && v >= 0, "Selling price must be a non-negative number"),
+    .refine(
+      (v) => !isNaN(v) && v >= 0,
+      "Selling price must be a non-negative number",
+    ),
   originalPrice: z
     .string()
     .or(z.number())
     .transform((v) => parseFloat(String(v)))
-    .refine((v) => !isNaN(v) && v >= 0, "Original price must be a non-negative number")
+    .refine(
+      (v) => !isNaN(v) && v >= 0,
+      "Original price must be a non-negative number",
+    )
     .optional(),
-  unit: z.enum(VALID_UNITS).default("pack"),
-  weightOrSize: z.string().optional(),
+  color: z.string().optional(),
+  material: z.string().optional(),
+  dimensions: z.string().optional(),
+  weight: z.string().optional(),
+  warranty: z.string().optional().default("No Warranty"),
   stockQuantity: z
     .string()
     .or(z.number())
     .transform((v) => parseInt(String(v), 10))
-    .refine((v) => !isNaN(v) && v >= 0, "Stock quantity must be a non-negative integer"),
+    .refine(
+      (v) => !isNaN(v) && v >= 0,
+      "Stock quantity must be a non-negative integer",
+    ),
   minOrderQuantity: z
     .string()
     .or(z.number())
@@ -33,7 +135,29 @@ export const singleProductSchema = z.object({
     .refine((v) => !isNaN(v) && v >= 1, "Min order quantity must be at least 1")
     .optional()
     .default(1),
-  description: z.string().max(2000).optional(),
+  description: z.string().max(3000).optional(),
+  specifications: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (!v) return new Map<string, string>();
+      try {
+        const obj = JSON.parse(v);
+        const map = new Map<string, string>();
+        Object.entries(obj).forEach(([key, val]) => {
+          map.set(key, String(val));
+        });
+        return map;
+      } catch {
+        // Try semicolon format: "key1:value1;key2:value2"
+        const map = new Map<string, string>();
+        v.split(";").forEach((pair) => {
+          const [key, value] = pair.split(":").map((s) => s.trim());
+          if (key && value) map.set(key, value);
+        });
+        return map;
+      }
+    }),
   tags: z
     .string()
     .optional()
@@ -43,28 +167,30 @@ export const singleProductSchema = z.object({
             .split(",")
             .map((t) => t.trim())
             .filter(Boolean)
-        : []
+        : [],
     ),
   isFastMoving: z
     .string()
     .or(z.boolean())
-    .transform((v) => v === true || v === "true" || v === "yes")
+    .transform((v) => v === true || v === "true" || v === "yes" || v === "1")
     .optional()
     .default(false),
   isFeatured: z
     .string()
     .or(z.boolean())
-    .transform((v) => v === true || v === "true" || v === "yes")
+    .transform((v) => v === true || v === "true" || v === "yes" || v === "1")
     .optional()
     .default(false),
 });
 
-// ─── CSV Row Schema (for bulk upload validation) ───────────────────────────────
+// ─── CSV Row Schema (for bulk upload) ─────────────────────────────────────────
 export const csvRowSchema = z.object({
   name: z.string().min(1, "name is required"),
   brand: z.string().optional().default(""),
   category: z.string().min(1, "category is required"),
   sub_category: z.string().optional().default(""),
+  type: z.string().optional().default(""),
+  compatibility: z.string().optional().default(""),
   price: z
     .string()
     .transform((v) => parseFloat(v))
@@ -73,14 +199,14 @@ export const csvRowSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v ? parseFloat(v) : undefined)),
-  unit: z
-    .string()
-    .optional()
-    .transform((v) => (VALID_UNITS.includes(v as (typeof VALID_UNITS)[number]) ? v : "pack"))
-    .default("pack"),
+  color: z.string().optional().default(""),
+  material: z.string().optional().default(""),
+  dimensions: z.string().optional().default(""),
   weight: z.string().optional().default(""),
+  warranty: z.string().optional().default("No Warranty"),
   description: z.string().optional().default(""),
-  image_url: z.string().url().optional().or(z.literal("")).default(""),
+  specifications: z.string().optional().default(""),
+  image_urls: z.string().optional().default(""), // Comma-separated URLs
   min_order_qty: z
     .string()
     .optional()
@@ -89,17 +215,20 @@ export const csvRowSchema = z.object({
   fast_moving: z
     .string()
     .optional()
-    .transform((v) => v === "yes" || v === "true")
+    .transform((v) => v?.toLowerCase() === "yes" || v?.toLowerCase() === "true")
     .default("no"),
   featured: z
     .string()
     .optional()
-    .transform((v) => v === "yes" || v === "true")
+    .transform((v) => v?.toLowerCase() === "yes" || v?.toLowerCase() === "true")
     .default("no"),
   stock: z
     .string()
     .transform((v) => parseInt(v, 10))
-    .refine((v) => !isNaN(v) && v >= 0, "stock must be a valid non-negative integer"),
+    .refine(
+      (v) => !isNaN(v) && v >= 0,
+      "stock must be a valid non-negative integer",
+    ),
   tags: z
     .string()
     .optional()
@@ -110,7 +239,7 @@ export const csvRowSchema = z.object({
             .split(",")
             .map((t) => t.trim())
             .filter(Boolean)
-        : []
+        : [],
     )
     .default(""),
 });

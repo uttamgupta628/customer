@@ -12,7 +12,7 @@ export interface RawRow {
 export function parseFileBuffer(
   buffer: Buffer,
   mimetype: string,
-  originalName: string
+  originalName: string,
 ): RawRow[] {
   const isExcel =
     mimetype ===
@@ -30,21 +30,46 @@ export function parseFileBuffer(
 
 function parseCsv(buffer: Buffer): RawRow[] {
   const records = parse(buffer, {
-    columns: true,         // use first row as header keys
+    columns: true, // use first row as header keys
     skip_empty_lines: true,
     trim: true,
-    bom: true,             // handle BOM if present
+    bom: true, // handle BOM if present
+    relax_column_count: true, // Allow varying column counts
+    relax_quotes: true, // Be lenient with quotes
   }) as RawRow[];
 
-  return records;
+  // Convert all keys to lowercase and replace spaces with underscores
+  return records.map((record) => {
+    const normalized: RawRow = {};
+    Object.keys(record).forEach((key) => {
+      const normalizedKey = key
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
+      normalized[normalizedKey] = record[key];
+    });
+    return normalized;
+  });
 }
 
 function parseExcel(buffer: Buffer): RawRow[] {
   const workbook = XLSX.read(buffer, { type: "buffer" });
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<RawRow>(firstSheet, {
-    defval: "",           // empty cells default to empty string
-    raw: false,           // all values as strings
+    defval: "", // empty cells default to empty string
+    raw: false, // all values as strings
   });
-  return rows;
+
+  // Normalize keys
+  return rows.map((record) => {
+    const normalized: RawRow = {};
+    Object.keys(record).forEach((key) => {
+      const normalizedKey = key
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
+      normalized[normalizedKey] = record[key];
+    });
+    return normalized;
+  });
 }

@@ -7,7 +7,7 @@ import { sendSuccess, sendError } from "../utils/response";
 export const getStockStats = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const [total, outOfStock, fastMoving, featured, lowStockDocs] =
@@ -18,45 +18,54 @@ export const getStockStats = async (
         Product.countDocuments({ isActive: true, isFeatured: true }),
         Product.find(
           { isActive: true, stockQuantity: { $gt: 0 } },
-          { stockQuantity: 1, isFastMoving: 1 }
+          { stockQuantity: 1, isFastMoving: 1 },
         ).lean(),
       ]);
 
     // A product is "low stock" if qty <= its threshold (fastMoving ? 20 : 10)
     const lowStock = lowStockDocs.filter(
-      (p) => p.stockQuantity <= (p.isFastMoving ? 20 : 10)
+      (p) => p.stockQuantity <= (p.isFastMoving ? 20 : 10),
     ).length;
 
     const inStock = total - outOfStock - lowStock;
 
-    sendSuccess(res, "Stock stats fetched successfully", {
-      total,
-      inStock: Math.max(0, inStock),
-      outOfStock,
-      lowStock,
-      fastMoving,
-      featured,
-    });
+    sendSuccess(
+      res,
+      "Electronics accessories stock stats fetched successfully",
+      {
+        total,
+        inStock: Math.max(0, inStock),
+        outOfStock,
+        lowStock,
+        fastMoving,
+        featured,
+      },
+    );
   } catch (error) {
     next(error);
   }
 };
 
 // ─── GET STOCK LIST ────────────────────────────────────────────────────────────
-// GET /api/stocks?page=1&limit=20&category=&search=&fastMoving=true
+// GET /api/stocks?page=1&limit=20&category=&search=&fastMoving=true&brand=
 export const getStockList = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const {
       page = "1",
       limit = "20",
       category,
+      brand,
+      type,
       fastMoving,
       featured,
       search,
+      compatibility,
+      color,
+      warranty,
     } = req.query;
 
     const pageNum = Math.max(1, parseInt(page as string, 10));
@@ -64,9 +73,16 @@ export const getStockList = async (
     const skip = (pageNum - 1) * limitNum;
 
     const filter: Record<string, unknown> = { isActive: true };
+
     if (category) filter.category = (category as string).toLowerCase();
+    if (brand) filter.brand = brand as string;
+    if (type) filter.type = type as string;
     if (fastMoving === "true") filter.isFastMoving = true;
     if (featured === "true") filter.isFeatured = true;
+    if (color) filter.color = color as string;
+    if (warranty) filter.warranty = warranty as string;
+    if (compatibility)
+      filter.compatibility = { $in: [compatibility as string] };
     if (search) filter.$text = { $search: search as string };
 
     const [products, total] = await Promise.all([
@@ -98,7 +114,7 @@ export const getStockList = async (
 export const adjustQuantity = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const { mode, value } = req.body as {
@@ -124,7 +140,8 @@ export const adjustQuantity = async (
 
     const prev = product.stockQuantity;
     if (mode === "increment") product.stockQuantity = prev + val;
-    else if (mode === "decrement") product.stockQuantity = Math.max(0, prev - val);
+    else if (mode === "decrement")
+      product.stockQuantity = Math.max(0, prev - val);
     else product.stockQuantity = val;
 
     await product.save();
@@ -132,6 +149,9 @@ export const adjustQuantity = async (
     sendSuccess(res, "Stock quantity updated", {
       _id: product._id,
       name: product.name,
+      brand: product.brand,
+      category: product.category,
+      type: product.type,
       previousQty: prev,
       newQuantity: product.stockQuantity,
     });
@@ -146,7 +166,7 @@ export const adjustQuantity = async (
 export const toggleFastMoving = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const { isFastMoving } = req.body as { isFastMoving: boolean };
@@ -167,7 +187,13 @@ export const toggleFastMoving = async (
     sendSuccess(
       res,
       `Product ${isFastMoving ? "marked as" : "removed from"} fast moving`,
-      { _id: product._id, name: product.name, isFastMoving: product.isFastMoving }
+      {
+        _id: product._id,
+        name: product.name,
+        brand: product.brand,
+        category: product.category,
+        isFastMoving: product.isFastMoving,
+      },
     );
   } catch (error) {
     next(error);
@@ -180,7 +206,7 @@ export const toggleFastMoving = async (
 export const toggleFeatured = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const { isFeatured } = req.body as { isFeatured: boolean };
@@ -201,7 +227,13 @@ export const toggleFeatured = async (
     sendSuccess(
       res,
       `Product ${isFeatured ? "marked as" : "removed from"} featured`,
-      { _id: product._id, name: product.name, isFeatured: product.isFeatured }
+      {
+        _id: product._id,
+        name: product.name,
+        brand: product.brand,
+        category: product.category,
+        isFeatured: product.isFeatured,
+      },
     );
   } catch (error) {
     next(error);
@@ -214,7 +246,7 @@ export const toggleFeatured = async (
 export const setAlertThreshold = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const { alertAt } = req.body as { alertAt: number | null };
@@ -249,7 +281,7 @@ export const setAlertThreshold = async (
 export const restockAllOOS = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const quantity = parseInt(String(req.body?.quantity ?? 10), 10);
@@ -260,13 +292,13 @@ export const restockAllOOS = async (
 
     const result = await Product.updateMany(
       { isActive: true, stockQuantity: 0 },
-      { $set: { stockQuantity: quantity } }
+      { $set: { stockQuantity: quantity } },
     );
 
     sendSuccess(
       res,
-      `${result.modifiedCount} out-of-stock products restocked to ${quantity}`,
-      { updatedCount: result.modifiedCount, quantity }
+      `${result.modifiedCount} out-of-stock electronics products restocked to ${quantity}`,
+      { updatedCount: result.modifiedCount, quantity },
     );
   } catch (error) {
     next(error);
@@ -278,17 +310,36 @@ export const restockAllOOS = async (
 export const exportStockCSV = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     const products = await Product.find({ isActive: true })
       .sort({ category: 1, name: 1 })
       .lean();
 
+    // Updated headers for electronics accessories
     const headers = [
-      "Name", "Brand", "Category", "Sub Category", "Unit", "Weight/Size",
-      "Stock Qty", "Min Order Qty", "Selling Price", "Original Price",
-      "Fast Moving", "Featured", "Alert At", "Image URL", "Tags", "Created At",
+      "Name",
+      "Brand",
+      "Category",
+      "Sub Category",
+      "Type",
+      "Compatibility",
+      "Color",
+      "Material",
+      "Dimensions",
+      "Weight",
+      "Warranty",
+      "Stock Qty",
+      "Min Order Qty",
+      "Selling Price (₹)",
+      "Original Price (₹)",
+      "Fast Moving",
+      "Featured",
+      "Alert At",
+      "Image URLs",
+      "Tags",
+      "Created At",
     ];
 
     const escape = (v: unknown) => {
@@ -298,14 +349,36 @@ export const exportStockCSV = async (
         : s;
     };
 
-    const rows = products.map((p) =>
-      [
+    const rows = products.map((p) => {
+      // Get primary image URL or first image
+      const primaryImage =
+        p.images?.find((img: any) => img.isPrimary)?.url ||
+        p.images?.[0]?.url ||
+        "";
+
+      // Get all image URLs
+      const allImageUrls = p.images?.map((img: any) => img.url).join(";") || "";
+
+      // Get specifications as string
+      const specs =
+        p.specifications instanceof Map
+          ? Array.from(p.specifications.entries())
+              .map(([k, v]) => `${k}:${v}`)
+              .join(";")
+          : JSON.stringify(p.specifications || {});
+
+      return [
         p.name,
         p.brand ?? "",
         p.category,
         p.subCategory ?? "",
-        p.unit,
-        p.weightOrSize ?? "",
+        p.type ?? "",
+        (p.compatibility ?? []).join(";"),
+        p.color ?? "",
+        p.material ?? "",
+        p.dimensions ?? "",
+        p.weight ?? "",
+        p.warranty ?? "No Warranty",
         p.stockQuantity,
         p.minOrderQuantity,
         p.sellingPrice,
@@ -313,20 +386,20 @@ export const exportStockCSV = async (
         p.isFastMoving ? "Yes" : "No",
         p.isFeatured ? "Yes" : "No",
         p.alertAt ?? "",
-        p.imageUrl ?? "",
+        allImageUrls,
         (p.tags ?? []).join(";"),
         new Date(p.createdAt).toLocaleDateString("en-IN"),
       ]
         .map(escape)
-        .join(",")
-    );
+        .join(",");
+    });
 
     const csv = [headers.join(","), ...rows].join("\n");
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="stock_report_${Date.now()}.csv"`
+      `attachment; filename="electronics_stock_report_${Date.now()}.csv"`,
     );
     res.send(csv);
   } catch (error) {
@@ -340,7 +413,7 @@ export const exportStockCSV = async (
 export const getActivityLog = async (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> => {
   try {
     sendSuccess(res, "Activity log fetched", {
