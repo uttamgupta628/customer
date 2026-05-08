@@ -173,11 +173,39 @@ export const bulkUploadProducts = async (
       data: Record<string, string>;
       errors: unknown;
     }[] = [];
-
+    function sanitizeRow(row: Record<string, string>): Record<string, string> {
+      const out: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) {
+        // Strip currency symbols, commas in numbers (e.g. "1,499" → "1499")
+        const cleaned = value
+          .trim()
+          .replace(/^[₹$€£¥\s]+/, "") // leading currency symbols
+          .replace(/^["']|["']$/g, ""); // stray surrounding quotes
+        out[key] = cleaned;
+      }
+      // Normalize numeric fields specifically — remove thousand separators
+      for (const numField of [
+        "price",
+        "original_price",
+        "stock",
+        "min_order_qty",
+      ]) {
+        if (out[numField]) {
+          out[numField] = out[numField].replace(/,/g, "").replace(/\.00$/, "");
+        }
+      }
+      return out;
+    }
     for (let i = 0; i < rawRows.length; i++) {
-      const row = rawRows[i];
+      const row = sanitizeRow(rawRows[i]); // ← add this
       const result = csvRowSchema.safeParse(row);
-
+      if (!result.success) {
+        console.log(
+          `Row ${i + 2} failed:`,
+          JSON.stringify(result.error.flatten().fieldErrors),
+        );
+        console.log(`Row ${i + 2} raw data:`, JSON.stringify(row));
+      }
       if (result.success) {
         const d = result.data;
 
@@ -493,7 +521,6 @@ export const updateProduct = async (
         }
         product.specifications = specsMap;
       } catch {
-        // Try semicolon format
         const map = new Map<string, string>();
         if (typeof specifications === "string") {
           specifications.split(";").forEach((pair: string) => {
@@ -529,18 +556,83 @@ export const updateProduct = async (
         isFeatured === "1";
     }
 
-    // Handle new image uploads
-    const imageFiles = req.files as Express.Multer.File[] | undefined;
-    if (imageFiles && imageFiles.length > 0) {
-      // Delete old images from Cloudinary
-      if (product.images && product.images.length > 0) {
-        const deletePromises = product.images.map((img) =>
-          cloudinary.uploader.destroy(img.publicId).catch(() => null),
-        );
-        await Promise.all(deletePromises);
-      }
+    // ═══════════════════════════════════════════
+    // ✅ IMAGE MANAGEMENT - COMPLETE REWRITE
+    // ═══════════════════════════════════════════
 
-      // Upload new images
+    const primaryImageId = req.body.primaryImageId;
+    const deletedImagesStr = req.body.deletedImages;
+    const imageFiles = req.files as Express.Multer.File[] | undefined;
+    const firstNewIsPrimary = req.body.firstNewIsPrimary === "true";
+
+    console.log("📷 Image update request:");
+    console.log("   primaryImageId:", primaryImageId);
+    console.log("   deletedImages:", deletedImagesStr);
+    console.log("   new image files:", imageFiles?.length || 0);
+    console.log("   firstNewIsPrimary:", firstNewIsPrimary);
+
+    // ── STEP 1: Update primary image on EXISTING images ──
+    if (primaryImageId && product.images && product.images.length > 0) {
+      console.log("🔄 Setting primary image to:", primaryImageId);
+
+      // Convert Mongoose subdocuments to plain objects if needed
+      const currentImages = product.images.map((img: any) =>
+        img.toObject ? img.toObject() : { ...img },
+      );
+
+      product.images = currentImages.map((img: any) => ({
+        url: img.url,
+        publicId: img.publicId,
+        isPrimary: img.publicId === primaryImageId,
+        altText: img.altText || "",
+      }));
+
+      console.log("✅ Primary image updated in existing images");
+    }
+
+    // ── STEP 2: Delete images marked for removal ──
+    if (deletedImagesStr) {
+      try {
+        const deletedIds: string[] = JSON.parse(deletedImagesStr);
+        console.log("🗑️ Deleting images:", deletedIds);
+
+        if (
+          deletedIds.length > 0 &&
+          product.images &&
+          product.images.length > 0
+        ) {
+          // Delete from Cloudinary
+          for (const publicId of deletedIds) {
+            await cloudinary.uploader.destroy(publicId).catch((err) => {
+              console.error(
+                `Failed to delete ${publicId} from Cloudinary:`,
+                err,
+              );
+            });
+          }
+
+          // Remove from product images array
+          const currentImages = product.images.map((img: any) =>
+            img.toObject ? img.toObject() : { ...img },
+          );
+
+          product.images = currentImages.filter(
+            (img: any) => !deletedIds.includes(img.publicId),
+          );
+
+          console.log(
+            `✅ Removed ${deletedIds.length} images. Remaining: ${product.images.length}`,
+          );
+        }
+      } catch (err) {
+        console.error("Failed to parse deletedImages:", err);
+      }
+    }
+
+    // ── STEP 3: Add new uploaded images ──
+    if (imageFiles && imageFiles.length > 0) {
+      console.log(`📤 Uploading ${imageFiles.length} new images`);
+
       try {
         const uploadPromises = imageFiles.map(async (file, index) => {
           const cloudResult = await uploadBufferToCloudinary(
@@ -550,11 +642,39 @@ export const updateProduct = async (
           return {
             url: cloudResult.secure_url,
             publicId: cloudResult.public_id,
-            isPrimary: index === 0,
-            altText: `${product.name} - Image ${index + 1}`,
+            isPrimary: false, // Will be set below if needed
+            altText: `${product.name} - Image ${Date.now()}`,
           };
         });
-        product.images = await Promise.all(uploadPromises);
+
+        const uploadedImages = await Promise.all(uploadPromises);
+
+        // Determine if new images should be primary
+        const hasExistingImages = product.images && product.images.length > 0;
+
+        if (
+          !hasExistingImages &&
+          firstNewIsPrimary &&
+          uploadedImages.length > 0
+        ) {
+          // No existing images left + flag says first new should be primary
+          uploadedImages[0].isPrimary = true;
+          console.log("✅ First new image set as primary (no existing images)");
+        } else if (!hasExistingImages && uploadedImages.length > 0) {
+          // No existing images, first new image becomes primary automatically
+          uploadedImages[0].isPrimary = true;
+          console.log("✅ First new image set as primary (auto)");
+        }
+
+        // Add to existing images
+        const currentImages = (product.images || []).map((img: any) =>
+          img.toObject ? img.toObject() : { ...img },
+        );
+
+        product.images = [...currentImages, ...uploadedImages];
+        console.log(
+          `✅ Added ${uploadedImages.length} new images. Total: ${product.images.length}`,
+        );
       } catch (uploadErr) {
         // Save other changes even if image upload fails
         await product.save();
@@ -565,6 +685,28 @@ export const updateProduct = async (
         });
         return;
       }
+    }
+
+    // ── STEP 4: Ensure at least one image is primary ──
+    if (product.images && product.images.length > 0) {
+      const hasPrimary = product.images.some((img: any) => img.isPrimary);
+      if (!hasPrimary) {
+        console.log("⚠️ No primary image found, setting first as primary");
+        const currentImages = product.images.map((img: any) =>
+          img.toObject ? img.toObject() : { ...img },
+        );
+        currentImages[0].isPrimary = true;
+        product.images = currentImages;
+      }
+
+      // Log final state
+      const primary = product.images.find((img: any) => img.isPrimary);
+      console.log(
+        `📷 Final primary: ${primary?.publicId} (${product.images.length} total)`,
+      );
+      product.images.forEach((img: any, i: number) => {
+        console.log(`   [${i}] ${img.publicId} - primary: ${img.isPrimary}`);
+      });
     }
 
     await product.save();
