@@ -1,4 +1,10 @@
-import { Router, Request, Response, NextFunction, RequestHandler } from "express";
+import {
+  Router,
+  Request,
+  Response,
+  NextFunction,
+  RequestHandler,
+} from "express";
 import {
   addSingleProduct,
   bulkUploadProducts,
@@ -6,11 +12,11 @@ import {
   getProductById,
   updateProduct,
   updateStepSize,
-  replaceProductImage,
+  replaceProductImages, // Changed from replaceProductImage to replaceProductImages
   toggleProductStatus,
   deleteProduct,
 } from "../controllers/productController";
-import { uploadSingleImage, uploadBulkFile } from "../middlewares/upload";
+import { uploadMultipleImages, uploadBulkFile } from "../middlewares/upload";
 
 const router = Router();
 
@@ -30,22 +36,47 @@ const handleUpload =
     });
   };
 
-router.post("/single", handleUpload(uploadSingleImage as RequestHandler), addSingleProduct);
+// POST /api/products/single - Add single product with multiple images (up to 8)
+router.post(
+  "/single",
+  handleUpload(uploadMultipleImages as RequestHandler),
+  addSingleProduct,
+);
 
-router.post("/bulk", handleUpload(uploadBulkFile as RequestHandler), bulkUploadProducts);
+// POST /api/products/bulk - Bulk upload via CSV/Excel file
+router.post(
+  "/bulk",
+  handleUpload(uploadBulkFile as RequestHandler),
+  bulkUploadProducts,
+);
 
+// GET /api/products - Get all products with filtering and pagination
 router.get("/", getAllProducts);
 
+// GET /api/products/:id - Get single product by ID
 router.get("/:id", getProductById);
 
-router.patch("/:id", handleUpload(uploadSingleImage as RequestHandler), updateProduct);
+// PATCH /api/products/:id - Update product with optional new images (up to 8)
+router.patch(
+  "/:id",
+  handleUpload(uploadMultipleImages as RequestHandler),
+  updateProduct,
+);
 
+// PATCH /api/products/:id/step - Update min order quantity
 router.patch("/:id/step", updateStepSize);
 
-router.patch("/:id/image", handleUpload(uploadSingleImage as RequestHandler), replaceProductImage);
+// PATCH /api/products/:id/images - Replace all product images (up to 8)
+router.patch(
+  "/:id/images",
+  handleUpload(uploadMultipleImages as RequestHandler),
+  replaceProductImages,
+);
 
+// PATCH /api/products/:id/status - Toggle product active/inactive
 router.patch("/:id/status", toggleProductStatus);
 
+// DELETE /api/products/:id - Hard delete product with images
 router.delete("/:id", deleteProduct);
 
 export default router;

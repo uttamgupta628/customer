@@ -36,13 +36,33 @@ const enrichAndValidateItems = async (
       continue;
     }
 
+    // Get primary image from images array
+    const primaryImage =
+      product.images?.find((img: any) => img.isPrimary)?.url ??
+      product.images?.[0]?.url ??
+      undefined;
+
+    // Convert specifications Map to plain object for storage
+    const specs =
+      product.specifications instanceof Map
+        ? Object.fromEntries(product.specifications)
+        : product.specifications || {};
+
     enriched.push({
       product: product._id,
       name: product.name,
       brand: product.brand,
-      imageUrl: product.imageUrl,
-      unit: product.unit,
-      weightOrSize: product.weightOrSize,
+      category: product.category,
+      type: product.type,
+      color: product.color,
+      warranty: product.warranty,
+      imageUrl: primaryImage,
+      images: product.images || [],
+      specifications: specs,
+      compatibility: product.compatibility || [],
+      dimensions: product.dimensions,
+      weight: product.weight,
+      material: product.material,
       sellingPrice: product.sellingPrice,
       originalPrice: product.originalPrice,
       quantity: raw.quantity,

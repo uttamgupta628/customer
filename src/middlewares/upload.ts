@@ -1,53 +1,65 @@
 import multer from "multer";
 import { Request } from "express";
 
-const memoryStorage = multer.memoryStorage();
+const storage = multer.memoryStorage();
 
-// ─── File Filters ─────────────────────────────────────────────────────────────
+// ─── Image File Filter ─────────────────────────────────────────────────────────
 const imageFileFilter = (
-  _req: Request,
+  req: Request,
   file: Express.Multer.File,
-  cb: multer.FileFilterCallback
+  cb: multer.FileFilterCallback,
 ) => {
-  const allowed = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
-  if (allowed.includes(file.mimetype)) {
+  if (file.mimetype.startsWith("image/")) {
     cb(null, true);
   } else {
-    cb(new Error("Only JPG, PNG, and WebP images are allowed"));
+    cb(new Error("Not an image! Please upload only images (JPG, PNG, WebP)."));
   }
 };
 
-const csvFileFilter = (
-  _req: Request,
+// ─── Excel/CSV File Filter ─────────────────────────────────────────────────────
+const excelFileFilter = (
+  req: Request,
   file: Express.Multer.File,
-  cb: multer.FileFilterCallback
+  cb: multer.FileFilterCallback,
 ) => {
-  const allowed = [
+  const allowedMimes = [
     "text/csv",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "text/plain",
+    "application/csv",
   ];
-  if (
-    allowed.includes(file.mimetype) ||
-    file.originalname.endsWith(".csv") ||
-    file.originalname.endsWith(".xlsx")
-  ) {
+
+  if (allowedMimes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error("Only CSV and Excel (.xlsx) files are allowed"));
+    cb(new Error("Please upload a CSV or Excel file (.csv, .xlsx, .xls)."));
   }
 };
 
-// ─── Exported Multer Instances ─────────────────────────────────────────────────
+// ─── Single Image Upload (for backward compatibility) ──────────────────────────
 export const uploadSingleImage = multer({
-  storage: memoryStorage,
+  storage,
   fileFilter: imageFileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max per file
+  },
 }).single("image");
 
+// ─── Multiple Images Upload (max 8 images) ─────────────────────────────────────
+export const uploadMultipleImages = multer({
+  storage,
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max per file
+    files: 8, // Maximum 8 files
+  },
+}).array("images", 8); // Field name "images", max 8 files
+
+// ─── Bulk File Upload (Excel/CSV) ──────────────────────────────────────────────
 export const uploadBulkFile = multer({
-  storage: memoryStorage,
-  fileFilter: csvFileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
-}).single("file");
+  storage,
+  fileFilter: excelFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max for bulk files
+  },
+}).single("file"); // Field name "file"
