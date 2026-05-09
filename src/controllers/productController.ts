@@ -8,6 +8,7 @@ import { parseFileBuffer } from "../utils/fileParser";
 import { sendSuccess, sendError } from "../utils/response";
 import { UploadApiResponse } from "cloudinary";
 import mongoose from "mongoose";
+import { convertDriveUrl } from "../utils/imageUtils";
 
 // ─── Helper: upload a Buffer to Cloudinary ────────────────────────────────────
 const uploadBufferToCloudinary = (
@@ -223,12 +224,32 @@ export const bulkUploadProducts = async (
         }
 
         // Parse image URLs
-        const imageUrls = d.image_urls
-          ? d.image_urls
-              .split(",")
-              .map((url) => url.trim())
-              .filter(Boolean)
-          : [];
+        // ✅ Parse image URLs - check BOTH formats:
+        // New format: image_1, image_2, ..., image_8
+        // Old format: image_urls (comma-separated)
+        // In bulkUploadProducts, change:
+        const imageUrls: string[] = [];
+
+        // Check image_1 through image_8
+        for (let j = 1; j <= 8; j++) {
+          const imgField = `image_${j}`;
+          const imgValue = row[imgField]; // Get directly from the raw row
+          if (imgValue && String(imgValue).trim()) {
+            imageUrls.push(String(imgValue).trim());
+          }
+        }
+
+        // Fallback to old image_urls
+        if (imageUrls.length === 0 && row["image_urls"]) {
+          String(row["image_urls"])
+            .split(",")
+            .forEach((url: string) => {
+              const trimmed = url.trim();
+              if (trimmed) imageUrls.push(trimmed);
+            });
+        }
+
+        console.log(`📷 Images for row ${i + 2}:`, imageUrls);
 
         const images = imageUrls.map((url, index) => ({
           url,
