@@ -7,6 +7,7 @@ import {
   resolveApprovalStatus,
   sendOtp,
 } from "../utils/otpUtils";
+import { sendNewRegistrationEmail } from "../utils/sendgrid";
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 
@@ -75,14 +76,11 @@ const MAX_OTP_ATTEMPTS: number = 5;
 const RESEND_COOLDOWN_SECONDS: number = 30;
 
 // ─── Helper: sign JWT ─────────────────────────────────────────────────────────
-// Replace the existing signToken with this:
-// ─── Helper: sign JWT ─────────────────────────────────────────────────────────
 const signToken = (userId: Types.ObjectId): string => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET is not set.");
   }
 
-  // ✅ Fix: Use proper typing for expiresIn
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: (process.env.JWT_EXPIRES_IN || "30d") as string | number,
   } as jwt.SignOptions);
@@ -397,6 +395,30 @@ const completeProfile = async (
       });
     }
 
+    // ── 🔔 Send email notification to admins (fire and forget) ──
+    const approvalType =
+      gstTrimmed && isGstValid(gstTrimmed) ? "auto" : "manual";
+
+    sendNewRegistrationEmail({
+      customerName: user.profile?.contactName || "New Customer",
+      phone: user.phone,
+      city: user.profile?.city,
+      state: user.profile?.state,
+      gstNumber: user.profile?.gstNumber,
+      addressLine1: user.profile?.addressLine1,
+      addressLine2: user.profile?.addressLine2,
+      pincode: user.profile?.pincode,
+      customerId: user._id.toString(),
+      approvalType: approvalType as "auto" | "manual",
+      createdAt: new Date(),
+    }).catch((err) => {
+      console.error(
+        "[completeProfile] Failed to send email notification:",
+        err,
+      );
+      // Don't fail the request if email fails
+    });
+
     return res.status(200).json({
       success: true,
       message:
@@ -560,6 +582,7 @@ const updateProfile = async (
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
+
 // ─── SAVE PUSH TOKEN ─────────────────────────────────────────────────────────
 const savePushToken = async (
   req: CustomRequest,
