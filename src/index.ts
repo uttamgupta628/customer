@@ -26,6 +26,26 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// In server.ts or routes - TEMPORARY DEBUG
+app.get("/api/debug/product-images", async (req, res) => {
+  try {
+    const Product = require("./models/Product").default;
+    const products = await Product.find({}).limit(5).lean();
+    const summary = products.map((p: { name: any; images: any[] }) => ({
+      name: p.name,
+      imagesCount: p.images?.length || 0,
+      images: p.images?.map((img: any) => ({
+        url: img.url?.substring(0, 80),
+        publicId: img.publicId,
+        isPrimary: img.isPrimary,
+      })),
+    }));
+    res.json({ success: true, total: products.length, products: summary });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Add this in server.ts before your routes
 app.post("/test-notification/:userId", async (req: Request, res: Response) => {
   try {
