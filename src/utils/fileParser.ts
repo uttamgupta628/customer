@@ -29,20 +29,30 @@ export function parseFileBuffer(
 }
 
 function parseCsv(buffer: Buffer): RawRow[] {
+  const text = buffer.toString("utf-8").replace(/^\uFEFF/, ""); // strip BOM
+
+  // Auto-detect delimiter
+  const firstLine = text.split("\n")[0];
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semicolonCount = (firstLine.match(/;/g) || []).length;
+  const delimiter = semicolonCount > commaCount ? ";" : ",";
+
   const records = parse(buffer, {
-    columns: true, // use first row as header keys
+    columns: true,
     skip_empty_lines: true,
     trim: true,
-    bom: true, // handle BOM if present
-    relax_column_count: true, // Allow varying column counts
-    relax_quotes: true, // Be lenient with quotes
+    bom: true,
+    relax_column_count: true,
+    relax_quotes: true,
+    delimiter, // ← use detected delimiter
   }) as RawRow[];
 
-  // Convert all keys to lowercase and replace spaces with underscores
   return records.map((record) => {
     const normalized: RawRow = {};
     Object.keys(record).forEach((key) => {
-      const normalizedKey = key
+      // Strip BOM from first key (extra safety)
+      const cleanKey = key.replace(/^\uFEFF/, "");
+      const normalizedKey = cleanKey
         .toLowerCase()
         .replace(/\s+/g, "_")
         .replace(/[^a-z0-9_]/g, "");
