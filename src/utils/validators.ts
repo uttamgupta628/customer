@@ -19,6 +19,10 @@ export const CATEGORIES = [
   "other-accessories",
 ] as const;
 
+const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+export const isGstValid = (gst: string): boolean =>
+  GST_REGEX.test(gst.trim().toUpperCase());
+
 export const VALID_COLORS = [
   "Black",
   "White",
