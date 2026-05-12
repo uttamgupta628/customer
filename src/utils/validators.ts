@@ -139,6 +139,14 @@ export const singleProductSchema = z.object({
     .refine((v) => !isNaN(v) && v >= 1, "Min order quantity must be at least 1")
     .optional()
     .default(1),
+  maxOrderQuantity: z // ✅ NEW
+    .string()
+    .or(z.number())
+    .transform((v) => parseInt(String(v), 10))
+    .refine((v) => !isNaN(v) && v >= 1, "Max order quantity must be at least 1")
+    .optional()
+    .nullable()
+    .default(null),
   description: z.string().max(3000).optional(),
   specifications: z
     .string()
@@ -216,6 +224,12 @@ export const csvRowSchema = z.object({
     .optional()
     .transform((v) => (v ? parseInt(v, 10) : 1))
     .default("1"),
+  max_order_qty: z // ✅ NEW
+    .string()
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : null))
+    .nullable()
+    .default(null),
   fast_moving: z
     .string()
     .optional()
