@@ -483,6 +483,7 @@ export const updateProduct = async (
       warranty,
       stockQuantity,
       minOrderQuantity,
+      maxOrderQuantity,
       description,
       specifications,
       tags,
@@ -555,6 +556,26 @@ export const updateProduct = async (
         return;
       }
       product.minOrderQuantity = q;
+    }
+    // ✅ Use undefined instead of null
+    if (maxOrderQuantity !== undefined) {
+      if (
+        maxOrderQuantity === "" ||
+        maxOrderQuantity === null ||
+        maxOrderQuantity === "null"
+      ) {
+        product.maxOrderQuantity = undefined; // ✅ Changed from null to undefined
+      } else {
+        const q = parseInt(maxOrderQuantity, 10);
+        if (isNaN(q) || q < 1) {
+          sendError(
+            res,
+            "maxOrderQuantity must be a positive integer or empty",
+          );
+          return;
+        }
+        product.maxOrderQuantity = q;
+      }
     }
 
     // Update specifications
