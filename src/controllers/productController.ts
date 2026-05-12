@@ -119,6 +119,7 @@ export const addSingleProduct = async (
       warranty: data.warranty || "No Warranty",
       stockQuantity: data.stockQuantity,
       minOrderQuantity: data.minOrderQuantity,
+      maxOrderQuantity: data.maxOrderQuantity || null, // ✅ NEW
       description: data.description,
       specifications: data.specifications || new Map(),
       images,
@@ -279,6 +280,7 @@ export const bulkUploadProducts = async (
           warranty: d.warranty || "No Warranty",
           stockQuantity: d.stock,
           minOrderQuantity: d.min_order_qty,
+          maxOrderQuantity: d.max_order_qty || null, // ✅ NEW
           description: d.description || undefined,
           specifications,
           images,

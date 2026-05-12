@@ -5,6 +5,7 @@ import { sendSuccess, sendError } from "../utils/response";
 import { sendPushNotification } from "../utils/pushNotification";
 
 // ─── Helper: validate & enrich items from DB ──────────────────────────────────
+// ─── Helper: validate & enrich items from DB ──────────────────────────────────
 const enrichAndValidateItems = async (
   rawItems: {
     productId: string;
@@ -29,6 +30,24 @@ const enrichAndValidateItems = async (
       errors.push(`Product is inactive: ${product.name}`);
       continue;
     }
+
+    // ✅ Check minimum order quantity
+    if (product.minOrderQuantity && raw.quantity < product.minOrderQuantity) {
+      errors.push(
+        `Minimum order quantity for "${product.name}" is ${product.minOrderQuantity}. You tried to order ${raw.quantity}.`,
+      );
+      continue;
+    }
+
+    // ✅ Check maximum order quantity (if set)
+    if (product.maxOrderQuantity && raw.quantity > product.maxOrderQuantity) {
+      errors.push(
+        `Maximum order quantity for "${product.name}" is ${product.maxOrderQuantity}. You tried to order ${raw.quantity}.`,
+      );
+      continue;
+    }
+
+    // Check stock availability
     if (product.stockQuantity < raw.quantity) {
       errors.push(
         `Insufficient stock for "${product.name}". Available: ${product.stockQuantity}`,

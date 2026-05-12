@@ -23,6 +23,7 @@ export interface IProduct extends Document {
   warranty?: string; // e.g., "1 Year", "6 Months"
   stockQuantity: number;
   minOrderQuantity: number;
+  maxOrderQuantity?: number; // ✅ NEW: Maximum quantity a customer can order
   description?: string;
   specifications?: Map<string, string>; // Key-value specs like {"Cable Length": "1.2m", "Connector": "USB-C"}
   images: IProductImage[];
@@ -115,6 +116,12 @@ const ProductSchema = new Schema<IProduct>(
       type: Number,
       min: [1, "Minimum order quantity must be at least 1"],
       default: 1,
+    },
+    maxOrderQuantity: {
+      // ✅ NEW
+      type: Number,
+      min: [1, "Maximum order quantity must be at least 1"],
+      default: null, // null means no limit
     },
     description: {
       type: String,
