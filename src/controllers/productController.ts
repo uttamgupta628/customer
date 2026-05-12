@@ -8,7 +8,10 @@ import { parseFileBuffer } from "../utils/fileParser";
 import { sendSuccess, sendError } from "../utils/response";
 import { UploadApiResponse } from "cloudinary";
 import mongoose from "mongoose";
-import { convertDriveUrl } from "../utils/imageUtils";
+import {
+  convertToDirectImageUrl,
+  isGoogleDriveUrl,
+} from "../utils/googleDriveParser";
 
 // ─── Helper: upload a Buffer to Cloudinary ────────────────────────────────────
 const uploadBufferToCloudinary = (
@@ -236,18 +239,41 @@ export const bulkUploadProducts = async (
           const imgField = `image_${j}`;
           const imgValue = row[imgField]; // Get directly from the raw row
           if (imgValue && String(imgValue).trim()) {
-            imageUrls.push(String(imgValue).trim());
+            const url = String(imgValue).trim();
+            // Convert Google Drive URLs to direct image URLs
+            if (isGoogleDriveUrl(url)) {
+              const converted = convertToDirectImageUrl(url);
+              if (converted) {
+                imageUrls.push(converted);
+                console.log(
+                  `🔄 Converted Google Drive URL: ${url} → ${converted}`,
+                );
+              } else {
+                console.warn(`⚠️ Failed to convert Google Drive URL: ${url}`);
+              }
+            } else {
+              imageUrls.push(url);
+            }
           }
         }
 
         // Fallback to old image_urls
         if (imageUrls.length === 0 && row["image_urls"]) {
-          String(row["image_urls"])
+          const urls = String(row["image_urls"])
             .split(",")
-            .forEach((url: string) => {
-              const trimmed = url.trim();
-              if (trimmed) imageUrls.push(trimmed);
-            });
+            .map((url: string) => url.trim())
+            .filter(Boolean);
+
+          urls.forEach((url: string) => {
+            if (isGoogleDriveUrl(url)) {
+              const converted = convertToDirectImageUrl(url);
+              if (converted) {
+                imageUrls.push(converted);
+              }
+            } else {
+              imageUrls.push(url);
+            }
+          });
         }
 
         console.log(`📷 Images for row ${i + 2}:`, imageUrls);
