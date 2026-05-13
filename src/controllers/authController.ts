@@ -47,6 +47,26 @@ interface CompleteProfileBody {
   longitude?: number | null;
 }
 
+interface UpdateProfileBody {
+  contactName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  gstNumber?: string;
+}
+
+interface SaveFCMTokenBody {
+  fcmToken?: string;
+  platform?: string;
+  device?: string;
+}
+
+interface RemoveFCMTokenBody {
+  fcmToken?: string;
+}
+
 interface UserProfile {
   contactName: string;
   addressLine1: string;
@@ -471,16 +491,6 @@ const getMe = async (req: CustomRequest, res: Response): Promise<Response> => {
   }
 };
 
-interface UpdateProfileBody {
-  contactName?: string;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  state?: string;
-  pincode?: string;
-  gstNumber?: string;
-}
-
 // [6] UPDATE PROFILE
 // PUT /auth/profile
 // Protected: requires Bearer token
@@ -583,7 +593,11 @@ const updateProfile = async (
   }
 };
 
-// ─── SAVE PUSH TOKEN ─────────────────────────────────────────────────────────
+// ─── [7] SAVE PUSH TOKEN (LEGACY - for backward compatibility) ───────────────
+// POST /auth/push-token
+// Protected: requires Bearer token
+// Body: { pushToken, platform?, device? }
+// Handles both Expo tokens and FCM tokens
 const savePushToken = async (
   req: CustomRequest,
   res: Response,
@@ -608,7 +622,10 @@ const savePushToken = async (
         .json({ success: false, message: "User not found" });
     }
 
-    // Check if token already exists
+    // Check if it's an FCM token (not Expo token)
+    const isFCMToken = !pushToken.startsWith("ExponentPushToken");
+
+    // Save to legacy pushTokens array
     const existingIndex = (user.pushTokens || []).findIndex(
       (t: any) => t.token === pushToken,
     );
@@ -634,15 +651,242 @@ const savePushToken = async (
       ];
     }
 
+    // If it's an FCM token, also add to fcmTokens array
+    if (isFCMToken) {
+      await user.addFCMToken(
+        pushToken,
+        platform || "android",
+        device || "Unknown",
+      );
+    }
+
     await user.save();
+
+    console.log(`📱 Push token saved: ${isFCMToken ? "FCM" : "Expo"}`);
+    console.log(`   User: ${user.phone}`);
+    console.log(`   FCM devices: ${user.fcmTokens?.length || 0}`);
 
     return res.status(200).json({
       success: true,
       message: "Push token saved",
+      tokenType: isFCMToken ? "fcm" : "expo",
+      totalDevices: user.fcmTokens?.length || 1,
     });
   } catch (err) {
     console.error("[savePushToken]", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── [8] SAVE FCM TOKEN (NEW) ───────────────────────────────────────────────
+// POST /auth/fcm-token
+// Protected: requires Bearer token
+// Body: { fcmToken, platform?, device? }
+const saveFCMToken = async (
+  req: CustomRequest,
+  res: Response,
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { fcmToken, platform, device } = req.body as SaveFCMTokenBody;
+
+    // Validation
+    if (!fcmToken) {
+      return res.status(400).json({
+        success: false,
+        message: "FCM token is required",
+      });
+    }
+
+    if (typeof fcmToken !== "string" || fcmToken.length < 50) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid FCM token format",
+      });
+    }
+
+    // Validate platform
+    const validPlatforms = ["ios", "android", "web"];
+    if (platform && !validPlatforms.includes(platform)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid platform. Must be: ios, android, or web",
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Add FCM token using model method
+    await user.addFCMToken(
+      fcmToken,
+      platform || "android",
+      device || "Unknown",
+    );
+
+    // Also add to legacy pushTokens for backward compatibility
+    const existingPushToken = (user.pushTokens || []).findIndex(
+      (t: any) => t.token === fcmToken,
+    );
+
+    if (existingPushToken === -1) {
+      user.pushTokens = [
+        ...(user.pushTokens || []),
+        {
+          token: fcmToken,
+          platform: (platform as "ios" | "android") || "android",
+          device: device || "Unknown",
+          createdAt: new Date(),
+        },
+      ];
+      await user.save();
+    }
+
+    console.log(`📱 FCM token registered for user: ${user.phone}`);
+    console.log(`   Platform: ${platform || "android"}`);
+    console.log(`   Device: ${device || "Unknown"}`);
+    console.log(`   Total devices: ${user.fcmTokens.length}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "FCM token registered successfully",
+      tokenCount: user.fcmTokens.length,
+      platforms: user.fcmTokens.map((t) => t.platform),
+      lastRegistered: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[saveFCMToken]", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save FCM token",
+      error: err.message,
+    });
+  }
+};
+
+// ─── [9] REMOVE FCM TOKEN (NEW) ─────────────────────────────────────────────
+// DELETE /auth/fcm-token
+// Protected: requires Bearer token
+// Body: { fcmToken }
+const removeFCMToken = async (
+  req: CustomRequest,
+  res: Response,
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const { fcmToken } = req.body as RemoveFCMTokenBody;
+
+    if (!fcmToken) {
+      return res.status(400).json({
+        success: false,
+        message: "FCM token is required",
+      });
+    }
+
+    // Remove from both FCM tokens and legacy pushTokens
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user._id,
+      {
+        $pull: {
+          fcmTokens: { token: fcmToken },
+          pushTokens: { token: fcmToken },
+        },
+      },
+      { new: true },
+    ).select("fcmTokens pushTokens");
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    console.log(`🗑️ FCM token removed for user: ${req.user._id}`);
+    console.log(`   Remaining devices: ${updatedUser.fcmTokens.length}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "FCM token removed successfully",
+      remainingTokens: updatedUser.fcmTokens.length,
+    });
+  } catch (err: any) {
+    console.error("[removeFCMToken]", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to remove FCM token",
+      error: err.message,
+    });
+  }
+};
+
+// ─── [10] GET FCM TOKENS (NEW) ──────────────────────────────────────────────
+// GET /auth/fcm-tokens
+// Protected: requires Bearer token
+const getFCMTokens = async (
+  req: CustomRequest,
+  res: Response,
+): Promise<Response> => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const user = await User.findById(req.user._id).select(
+      "fcmTokens pushTokens phone profile.contactName",
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Format active FCM tokens
+    const activeTokens = (user.fcmTokens || []).map((token) => ({
+      platform: token.platform,
+      device: token.device,
+      lastUsed: token.lastUsed,
+      createdAt: token.createdAt,
+      isActive: true,
+    }));
+
+    // Format legacy tokens
+    const legacyTokens = (user.pushTokens || []).map((token) => ({
+      platform: token.platform || "unknown",
+      device: token.device || "Unknown",
+      createdAt: token.createdAt,
+      isLegacy: true,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: "FCM tokens fetched successfully",
+      phone: user.phone,
+      name: user.profile?.contactName,
+      activeDevices: activeTokens.length,
+      fcmTokens: activeTokens,
+      legacyTokens: legacyTokens,
+    });
+  } catch (err: any) {
+    console.error("[getFCMTokens]", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get FCM tokens",
+      error: err.message,
+    });
   }
 };
 
@@ -653,5 +897,8 @@ export {
   completeProfile,
   getMe,
   updateProfile,
-  savePushToken,
+  savePushToken, // Legacy push token (backward compatible)
+  saveFCMToken, // New FCM token handler
+  removeFCMToken, // New FCM token removal
+  getFCMTokens, // New get FCM tokens
 };
