@@ -19,8 +19,7 @@ export const ensureDefaultAdmin = async (): Promise<void> => {
   }
 };
 
-// ─── LOGIN ─────────────────────────────────────────────────────────────────────
-
+// ─── LOGIN ───────────────────────────────────────────────────────────────
 export const loginAdmin = async (
   req: Request,
   res: Response,
@@ -56,7 +55,7 @@ export const loginAdmin = async (
   }
 };
 
-// ─── GET PROFILE ───────────────────────────────────────────────────────────────
+// ─── GET PROFILE ─────────────────────────────────────────────────────────
 export const getAdminProfile = async (
   req: Request,
   res: Response,
@@ -76,7 +75,7 @@ export const getAdminProfile = async (
   }
 };
 
-// ─── CHANGE EMAIL ──────────────────────────────────────────────────────────────
+// ─── CHANGE EMAIL ────────────────────────────────────────────────────────
 export const changeEmail = async (
   req: Request,
   res: Response,
@@ -135,7 +134,7 @@ export const changeEmail = async (
   }
 };
 
-// ─── CHANGE PASSWORD ───────────────────────────────────────────────────────────
+// ─── CHANGE PASSWORD ─────────────────────────────────────────────────────
 export const changePassword = async (
   req: Request,
   res: Response,
@@ -189,8 +188,8 @@ export const changePassword = async (
     next(error);
   }
 };
-// ─── GET ALL CUSTOMERS ────────────────────────────────────────────────────────
-// GET /api/admin/customers
+
+// ─── GET ALL CUSTOMERS ────────────────────────────────────────────────────
 export const getCustomers = async (
   req: Request,
   res: Response,
@@ -202,7 +201,6 @@ export const getCustomers = async (
     const limitNum = Math.min(200, parseInt(limit as string, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    // Filter: only customers (not admins)
     const filter: Record<string, unknown> = { role: { $ne: "admin" } };
 
     if (search && search !== "") {
@@ -240,8 +238,7 @@ export const getCustomers = async (
   }
 };
 
-// ─── APPROVE CUSTOMER ─────────────────────────────────────────────────────────
-// PATCH /api/admin/customers/:id/approve
+// ─── APPROVE CUSTOMER ────────────────────────────────────────────────────
 export const approveCustomer = async (
   req: Request,
   res: Response,
@@ -270,7 +267,7 @@ export const approveCustomer = async (
     user.isActive = true;
     await user.save();
 
-    // ✅ Send push notification
+    // ✅ Send FCM push notification
     const customerName = user.profile?.contactName || "User";
     sendPushNotification(
       user._id.toString(),
@@ -298,8 +295,7 @@ export const approveCustomer = async (
   }
 };
 
-// ─── REJECT CUSTOMER ──────────────────────────────────────────────────────────
-// PATCH /api/admin/customers/:id/reject
+// ─── REJECT CUSTOMER ─────────────────────────────────────────────────────
 export const rejectCustomer = async (
   req: Request,
   res: Response,
@@ -329,7 +325,7 @@ export const rejectCustomer = async (
     user.isActive = false;
     await user.save();
 
-    // ✅ Send push notification
+    // ✅ Send FCM push notification
     const customerName = user.profile?.contactName || "User";
     sendPushNotification(
       user._id.toString(),
@@ -354,8 +350,7 @@ export const rejectCustomer = async (
   }
 };
 
-// ─── ACTIVATE CUSTOMER ────────────────────────────────────────────────────────
-// PATCH /api/admin/customers/:id/activate
+// ─── ACTIVATE CUSTOMER ────────────────────────────────────────────────────
 export const activateCustomer = async (
   req: Request,
   res: Response,
@@ -383,8 +378,7 @@ export const activateCustomer = async (
   }
 };
 
-// ─── DEACTIVATE CUSTOMER ──────────────────────────────────────────────────────
-// PATCH /api/admin/customers/:id/deactivate
+// ─── DEACTIVATE CUSTOMER ──────────────────────────────────────────────────
 export const deactivateCustomer = async (
   req: Request,
   res: Response,
@@ -412,8 +406,7 @@ export const deactivateCustomer = async (
   }
 };
 
-// ─── DELETE CUSTOMER ──────────────────────────────────────────────────────────
-// DELETE /api/admin/customers/:id
+// ─── DELETE CUSTOMER ──────────────────────────────────────────────────────
 export const deleteCustomer = async (
   req: Request,
   res: Response,
@@ -428,7 +421,6 @@ export const deleteCustomer = async (
       return;
     }
 
-    // Prevent deleting admin users
     if (user.role === "admin") {
       sendError(res, "Cannot delete admin users", undefined, 403);
       return;
@@ -445,8 +437,7 @@ export const deleteCustomer = async (
   }
 };
 
-// ─── GET SINGLE CUSTOMER DETAILS ──────────────────────────────────────────────
-// GET /api/admin/customers/:id
+// ─── GET SINGLE CUSTOMER DETAILS ──────────────────────────────────────────
 export const getCustomerById = async (
   req: Request,
   res: Response,
@@ -467,8 +458,7 @@ export const getCustomerById = async (
   }
 };
 
-// ─── SEND MANUAL PUSH NOTIFICATION ────────────────────────────────────────────
-// POST /api/admin/send-push
+// ─── SEND MANUAL PUSH NOTIFICATION ────────────────────────────────────────
 export const sendManualPush = async (
   req: Request,
   res: Response,
@@ -484,7 +474,6 @@ export const sendManualPush = async (
 
     let targetUsers: any[] = [];
 
-    // Determine target users based on type
     switch (targetType) {
       case "all":
         targetUsers = await User.find({
@@ -530,7 +519,7 @@ export const sendManualPush = async (
 
     let sentCount = 0;
 
-    // Send push to each user
+    // Send FCM push to each user
     for (const user of targetUsers) {
       try {
         await sendPushNotification(user._id.toString(), title, body, {
@@ -547,6 +536,36 @@ export const sendManualPush = async (
       sentCount,
       totalTargets: targetUsers.length,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── TEST FCM NOTIFICATION ────────────────────────────────────────────────
+export const testFCMNotification = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { userId, title, body } = req.body;
+
+    if (!userId) {
+      sendError(res, "User ID is required", undefined, 400);
+      return;
+    }
+
+    await sendPushNotification(
+      userId,
+      title || "Test FCM Notification",
+      body || "This is a test notification from Firebase!",
+      {
+        type: "test",
+        timestamp: new Date().toISOString(),
+      },
+    );
+
+    sendSuccess(res, "Test FCM notification sent successfully");
   } catch (error) {
     next(error);
   }

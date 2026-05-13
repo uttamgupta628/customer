@@ -36,3 +36,5 @@ Thumbs.db
 # Uploads (temp files)
 uploads/
 temp/
+
+firebase-service-account.json

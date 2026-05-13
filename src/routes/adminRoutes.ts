@@ -12,8 +12,10 @@ import {
   deactivateCustomer,
   deleteCustomer,
   sendManualPush,
+  testFCMNotification,
 } from "../controllers/Admincontroller";
 import { adminAuth } from "../middlewares/adminAuth";
+import User from "../models/Users";
 
 const router = Router();
 
@@ -27,12 +29,60 @@ router.patch("/password", adminAuth, changePassword);
 
 // ── Customer Management ───────────────────────────────────────────────────────
 router.get("/customers", adminAuth, getCustomers);
-router.get("/customers/:id", adminAuth, getCustomerById); // GET single customer
-router.patch("/customers/:id/approve", adminAuth, approveCustomer); // Approve
-router.patch("/customers/:id/reject", adminAuth, rejectCustomer); // Reject
-router.patch("/customers/:id/activate", adminAuth, activateCustomer); // Activate
-router.patch("/customers/:id/deactivate", adminAuth, deactivateCustomer); // Deactivate
-router.delete("/customers/:id", adminAuth, deleteCustomer); // Delete
+router.get("/customers/:id", adminAuth, getCustomerById);
+router.patch("/customers/:id/approve", adminAuth, approveCustomer);
+router.patch("/customers/:id/reject", adminAuth, rejectCustomer);
+router.patch("/customers/:id/activate", adminAuth, activateCustomer);
+router.patch("/customers/:id/deactivate", adminAuth, deactivateCustomer);
+router.delete("/customers/:id", adminAuth, deleteCustomer);
+
+// ── Push Notification Routes ──────────────────────────────────────────────────
 router.post("/send-push", adminAuth, sendManualPush);
+router.post("/test-fcm", adminAuth, testFCMNotification);
+
+// ── FCM Token Management (for debugging) ──────────────────────────────────────
+router.get("/customers/:id/fcm-tokens", adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select(
+      "fcmTokens pushTokens phone profile.contactName",
+    );
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        userId: user._id,
+        phone: user.phone,
+        name: user.profile?.contactName,
+        fcmTokens: user.fcmTokens || [],
+        pushTokens: user.pushTokens || [],
+        totalDevices: user.fcmTokens?.length || 0,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ── Clear FCM Tokens (for debugging) ──────────────────────────────────────────
+router.delete("/customers/:id/fcm-tokens", adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    await User.findByIdAndUpdate(id, {
+      $set: { fcmTokens: [], pushTokens: [] },
+    });
+
+    res.json({ success: true, message: "All FCM tokens cleared" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 export default router;
