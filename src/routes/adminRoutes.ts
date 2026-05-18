@@ -33,7 +33,7 @@ router.patch("/password", adminAuth, changePassword);
 
 // ── QR Code Management ────────────────────────────────────────────────────────
 router.post("/qr-code", adminAuth, uploadSingleImage, uploadQRCode);
-router.get("/qr-code", adminAuth, getQRCode);
+router.get("/qr-code", getQRCode);  
 router.delete("/qr-code", adminAuth, deleteQRCode);
 
 // ── Customer Management ───────────────────────────────────────────────────────
