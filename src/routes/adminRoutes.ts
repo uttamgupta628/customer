@@ -13,8 +13,12 @@ import {
   deleteCustomer,
   sendManualPush,
   testFCMNotification,
+  uploadQRCode,
+  getQRCode,
+  deleteQRCode,
 } from "../controllers/Admincontroller";
 import { adminAuth } from "../middlewares/adminAuth";
+import { uploadSingleImage } from "../middlewares/upload";
 import User from "../models/Users";
 
 const router = Router();
@@ -26,6 +30,11 @@ router.post("/login", loginAdmin);
 router.get("/profile", adminAuth, getAdminProfile);
 router.patch("/email", adminAuth, changeEmail);
 router.patch("/password", adminAuth, changePassword);
+
+// ── QR Code Management ────────────────────────────────────────────────────────
+router.post("/qr-code", adminAuth, uploadSingleImage, uploadQRCode);
+router.get("/qr-code", adminAuth, getQRCode);
+router.delete("/qr-code", adminAuth, deleteQRCode);
 
 // ── Customer Management ───────────────────────────────────────────────────────
 router.get("/customers", adminAuth, getCustomers);
