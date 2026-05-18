@@ -4,6 +4,8 @@ import Admin from "../models/Admin";
 import { sendSuccess, sendError } from "../utils/response";
 import User from "../models/Users";
 import { sendPushNotification } from "../utils/pushNotification";
+import AdminSettings from "../models/AdminSettings";
+import { uploadToCloudinary } from "../utils/cloudinary";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "changeme_secret";
 const JWT_EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
@@ -566,6 +568,90 @@ export const testFCMNotification = async (
     );
 
     sendSuccess(res, "Test FCM notification sent successfully");
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── UPLOAD QR CODE ───────────────────────────────────────────────────────
+export const uploadQRCode = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    if (!req.file) {
+      sendError(res, "QR code image is required", undefined, 400);
+      return;
+    }
+
+    // Upload to Cloudinary
+    const result = await uploadToCloudinary(req.file.buffer, "qr-codes");
+
+    // Save URL to admin settings
+    const settings = await (AdminSettings as any).getSettings();
+    settings.qrCodeUrl = result.secure_url;
+
+    if (req.body.upiId) {
+      settings.upiId = req.body.upiId;
+    }
+
+    await settings.save();
+
+    sendSuccess(res, "QR code uploaded successfully", {
+      qrCodeUrl: settings.qrCodeUrl,
+      upiId: settings.upiId,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET QR CODE ──────────────────────────────────────────────────────────
+export const getQRCode = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const settings = await (AdminSettings as any).getSettings();
+
+    sendSuccess(res, "QR code fetched successfully", {
+      qrCodeUrl: settings.qrCodeUrl,
+      upiId: settings.upiId,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── DELETE QR CODE ───────────────────────────────────────────────────────
+export const deleteQRCode = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const settings = await (AdminSettings as any).getSettings();
+
+    // Delete from Cloudinary if exists
+    if (settings.qrCodeUrl) {
+      try {
+        const publicId = settings.qrCodeUrl.split("/").pop()?.split(".")[0];
+        if (publicId) {
+          const cloudinary = require("cloudinary").v2;
+          await cloudinary.uploader.destroy(`qr-codes/${publicId}`);
+        }
+      } catch (err) {
+        console.error("Failed to delete from Cloudinary:", err);
+      }
+    }
+
+    settings.qrCodeUrl = "";
+    settings.upiId = "";
+    await settings.save();
+
+    sendSuccess(res, "QR code deleted successfully");
   } catch (error) {
     next(error);
   }
