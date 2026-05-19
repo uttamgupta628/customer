@@ -424,7 +424,23 @@ export const updateOrderStatus = async (
     };
 
     const title = "Order Status Updated";
-    const body = `Your order ${order.orderNumber} is now ${statusLabels[status] || status}.`;
+
+    // Get product names from order items
+    const productNames = order.items.map((item) => item.name);
+    let productNamesText = "";
+
+    if (productNames.length === 1) {
+      productNamesText = productNames[0];
+    } else if (productNames.length === 2) {
+      productNamesText = `${productNames[0]} and ${productNames[1]}`;
+    } else if (productNames.length > 2) {
+      productNamesText = `${productNames[0]} and ${productNames.length - 1} more item(s)`;
+    }
+
+    const body =
+      productNames.length > 0
+        ? `Your order containing ${productNamesText} is now ${statusLabels[status] || status}.`
+        : `Your order is now ${statusLabels[status] || status}.`;
 
     await sendPushNotification(order.customer.toString(), title, body, {
       type: "order_status_update",
