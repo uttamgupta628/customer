@@ -16,6 +16,7 @@ export interface IProduct extends Document {
   compatibility?: string[]; // e.g., ["iPhone 15", "Android", "Laptop"]
   sellingPrice: number;
   originalPrice?: number;
+  enforceOrderLimits?: boolean;
   color?: string;
   material?: string;
   dimensions?: string; // e.g., "10x5x2 cm"
@@ -122,6 +123,10 @@ const ProductSchema = new Schema<IProduct>(
       type: Number,
       min: [1, "Maximum order quantity must be at least 1"],
       default: null, // null means no limit
+    },
+    enforceOrderLimits: {
+      type: Boolean,
+      default: true,
     },
     description: {
       type: String,
