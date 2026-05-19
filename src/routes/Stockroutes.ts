@@ -9,6 +9,7 @@ import {
   toggleFastMoving,
   toggleFeatured,
   setAlertThreshold,
+  toggleOrderLimits,
 } from "../controllers/Stockcontroller";
 
 const router = Router();
@@ -22,5 +23,7 @@ router.patch("/:id/quantity", adjustQuantity);
 router.patch("/:id/fast-moving", toggleFastMoving);
 router.patch("/:id/featured", toggleFeatured);
 router.patch("/:id/alert", setAlertThreshold);
+// In your stock routes file
+router.patch("/:id/toggle-order-limits", toggleOrderLimits);
 
 export default router;

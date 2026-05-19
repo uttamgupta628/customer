@@ -424,3 +424,40 @@ export const getActivityLog = async (
     next(error);
   }
 };
+
+// PATCH /api/stocks/:id/toggle-order-limits
+export const toggleOrderLimits = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const { enforceOrderLimits } = req.body as { enforceOrderLimits: boolean };
+
+    if (typeof enforceOrderLimits !== "boolean") {
+      sendError(res, "enforceOrderLimits must be a boolean");
+      return;
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    product.enforceOrderLimits = enforceOrderLimits;
+    await product.save();
+
+    sendSuccess(
+      res,
+      `Order limits ${enforceOrderLimits ? "enabled" : "disabled"}`,
+      {
+        _id: product._id,
+        name: product.name,
+        enforceOrderLimits: product.enforceOrderLimits,
+      },
+    );
+  } catch (error) {
+    next(error);
+  }
+};
