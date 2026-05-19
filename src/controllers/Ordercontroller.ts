@@ -4,11 +4,11 @@ import Product from "../models/Product";
 import { sendSuccess, sendError } from "../utils/response";
 import { sendPushNotification } from "../utils/pushNotification";
 
-// ─── Helper: validate & enrich items from DB ──────────────────────────────────
-// ─── Helper: validate & enrich items from DB ──────────────────────────────────
+// In your order controller, update the validation section:
 const enrichAndValidateItems = async (
   rawItems: {
-    productId: string;
+    productId?: string;
+    product?: string;
     quantity: number;
   }[],
 ) => {
@@ -16,14 +16,16 @@ const enrichAndValidateItems = async (
   const errors: string[] = [];
 
   for (const raw of rawItems) {
-    if (!raw.productId || !raw.quantity || raw.quantity < 1) {
-      errors.push(`Invalid item: productId=${raw.productId}`);
+    const productId = raw.productId || raw.product;
+
+    if (!productId || !raw.quantity || raw.quantity < 1) {
+      errors.push(`Invalid item: productId=${productId}`);
       continue;
     }
 
-    const product = await Product.findById(raw.productId).lean();
+    const product = await Product.findById(productId).lean();
     if (!product) {
-      errors.push(`Product not found: ${raw.productId}`);
+      errors.push(`Product not found: ${productId}`);
       continue;
     }
     if (!product.isActive) {
@@ -31,23 +33,31 @@ const enrichAndValidateItems = async (
       continue;
     }
 
-    // ✅ Check minimum order quantity
-    if (product.minOrderQuantity && raw.quantity < product.minOrderQuantity) {
+    // ✅ Check minimum order quantity ONLY if limits are enforced
+    if (
+      product.enforceOrderLimits !== false &&
+      product.minOrderQuantity &&
+      raw.quantity < product.minOrderQuantity
+    ) {
       errors.push(
         `Minimum order quantity for "${product.name}" is ${product.minOrderQuantity}. You tried to order ${raw.quantity}.`,
       );
       continue;
     }
 
-    // ✅ Check maximum order quantity (if set)
-    if (product.maxOrderQuantity && raw.quantity > product.maxOrderQuantity) {
+    // ✅ Check maximum order quantity ONLY if limits are enforced
+    if (
+      product.enforceOrderLimits !== false &&
+      product.maxOrderQuantity &&
+      raw.quantity > product.maxOrderQuantity
+    ) {
       errors.push(
         `Maximum order quantity for "${product.name}" is ${product.maxOrderQuantity}. You tried to order ${raw.quantity}.`,
       );
       continue;
     }
 
-    // Check stock availability
+    // Check stock availability (always enforced)
     if (product.stockQuantity < raw.quantity) {
       errors.push(
         `Insufficient stock for "${product.name}". Available: ${product.stockQuantity}`,
