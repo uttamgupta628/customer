@@ -38,12 +38,14 @@ export interface IOrderAddress {
   phone: string;
 }
 
+// ✅ Added "completed" to OrderStatus type
 export type OrderStatus =
   | "pending"
   | "confirmed"
   | "processing"
   | "out_for_delivery"
   | "delivered"
+  | "completed"
   | "cancelled";
 
 export type PaymentMethod = "upi" | "cod" | "card" | "netbanking";
@@ -135,6 +137,7 @@ const OrderAddressSchema = new Schema<IOrderAddress>(
   { _id: false },
 );
 
+// ✅ Added "completed" to StatusHistorySchema enum
 const StatusHistorySchema = new Schema(
   {
     status: {
@@ -145,6 +148,7 @@ const StatusHistorySchema = new Schema(
         "processing",
         "out_for_delivery",
         "delivered",
+        "completed",
         "cancelled",
       ],
       required: true,
@@ -215,7 +219,7 @@ const OrderSchema = new Schema<IOrder>(
     },
     transactionId: { type: String, trim: true },
 
-    // ── Status ──
+    // ✅ Added "completed" to status enum
     status: {
       type: String,
       enum: [
@@ -224,6 +228,7 @@ const OrderSchema = new Schema<IOrder>(
         "processing",
         "out_for_delivery",
         "delivered",
+        "completed",
         "cancelled",
       ],
       default: "pending",
