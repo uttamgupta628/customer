@@ -488,18 +488,9 @@ export const getAllOrders = async (
     const limitNum = Math.min(100, parseInt(limit as string, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    // ✅ Filter out orders with deleted customers by default
-    const filter: Record<string, unknown> = {
-      customer: { $exists: true, $ne: null },
-    };
-
+    const filter: Record<string, unknown> = {};
     if (status) filter.status = status;
-
-    // If specific customer is requested, override the default filter
-    if (customerId) {
-      filter.customer = customerId;
-    }
-
+    if (customerId) filter.customer = customerId;
     if (from || to) {
       filter.createdAt = {
         ...(from ? { $gte: new Date(from as string) } : {}),
