@@ -201,22 +201,39 @@ export const notifyMeWhenInStock = async (
       return;
     }
 
-    // Check if already subscribed
+    // Check for ANY existing alert (notified or not)
     const existingAlert = await StockAlert.findOne({
       user: userId,
       product: productId,
-      isNotified: false,
     });
 
     if (existingAlert) {
-      sendSuccess(
-        res,
-        "You're already on the notification list for this product",
-        {
-          alertId: existingAlert._id,
-          productName: product.name,
-        },
-      );
+      // If the alert exists but was already notified, RESET it
+      if (existingAlert.isNotified) {
+        existingAlert.isNotified = false;
+        await existingAlert.save();
+
+        sendSuccess(
+          res,
+          "You'll be notified when this product is back in stock",
+          {
+            alertId: existingAlert._id,
+            productName: product.name,
+            currentStock: product.stockQuantity,
+            reactivated: true,
+          },
+        );
+      } else {
+        // Alert exists and is still pending
+        sendSuccess(
+          res,
+          "You're already on the notification list for this product",
+          {
+            alertId: existingAlert._id,
+            productName: product.name,
+          },
+        );
+      }
       return;
     }
 
@@ -235,10 +252,40 @@ export const notifyMeWhenInStock = async (
   } catch (error: any) {
     // Handle duplicate key error
     if (error.code === 11000) {
-      sendSuccess(
-        res,
-        "You're already on the notification list for this product",
-      );
+      // 🔧 FIX: Get userId and productId from request in catch block
+      const userId = (req as any).user?._id;
+      const productId = req.body?.productId;
+
+      if (!userId || !productId) {
+        sendError(res, "Invalid request data", undefined, 400);
+        return;
+      }
+
+      try {
+        const existingAlert = await StockAlert.findOne({
+          user: userId,
+          product: productId,
+        });
+
+        if (existingAlert && existingAlert.isNotified) {
+          existingAlert.isNotified = false;
+          await existingAlert.save();
+          sendSuccess(
+            res,
+            "You'll be notified when this product is back in stock",
+          );
+        } else {
+          sendSuccess(
+            res,
+            "You're already on the notification list for this product",
+          );
+        }
+      } catch (resetError) {
+        sendSuccess(
+          res,
+          "You're already on the notification list for this product",
+        );
+      }
       return;
     }
     next(error);
