@@ -12,6 +12,8 @@ import {
   convertToDirectImageUrl,
   isGoogleDriveUrl,
 } from "../utils/googleDriveParser";
+import { sendPushNotification } from "../utils/pushNotification";
+import User from "../models/Users";
 
 // ─── Helper: upload a Buffer to Cloudinary ────────────────────────────────────
 const uploadBufferToCloudinary = (
@@ -48,6 +50,95 @@ const uploadBufferToCloudinary = (
 
     streamifier.createReadStream(buffer).pipe(uploadStream);
   });
+};
+
+// ─── Helper: Send Product Notifications ───────────────────────────────────────
+const notifyNewProducts = async (
+  products: Array<{
+    _id: mongoose.Types.ObjectId | string;
+    name: string;
+    sellingPrice: number;
+  }>,
+  isBulk: boolean,
+): Promise<void> => {
+  try {
+    // Get all active customers
+    const users = await User.find({
+      role: "customer",
+      isActive: true,
+    }).lean();
+
+    if (users.length === 0) {
+      console.log("⚠️ No active customers to notify");
+      return;
+    }
+
+    let title: string;
+    let body: string;
+    let data: Record<string, string>;
+
+    if (isBulk) {
+      // Bulk upload notification
+      const productNames = products
+        .slice(0, 3)
+        .map((p) => p.name)
+        .join(", ");
+      const moreText =
+        products.length > 3 ? ` and ${products.length - 3} more` : "";
+
+      title = "🆕 New Products Arrived!";
+      body = `${products.length} new products added${productNames ? `: ${productNames}${moreText}` : ""}. Check them out now!`;
+
+      data = {
+        type: "new_products",
+        screen: "/products",
+        count: String(products.length),
+      };
+    } else if (products.length === 1) {
+      // Single product notification
+      const product = products[0];
+      title = "🆕 New Product Added!";
+      body = `${product.name} is now available at ₹${product.sellingPrice}. Tap to view details!`;
+
+      data = {
+        type: "new_product",
+        screen: `/product/${product._id}`,
+        productId: product._id.toString(),
+        productName: product.name,
+        price: String(product.sellingPrice),
+      };
+    } else {
+      // Fallback (shouldn't happen but just in case)
+      title = "🆕 New Products Available!";
+      body = `Check out our latest additions to the catalog.`;
+
+      data = {
+        type: "new_products",
+        screen: "/products",
+      };
+    }
+
+    console.log(`📢 Sending product notification to ${users.length} users`);
+    console.log(`   Title: ${title}`);
+    console.log(`   Body: ${body}`);
+
+    // Send to all active customers
+    let sentCount = 0;
+    for (const user of users) {
+      try {
+        await sendPushNotification(user._id.toString(), title, body, data);
+        sentCount++;
+      } catch (err) {
+        console.error(`Failed to send to user ${user._id}:`, err);
+      }
+    }
+
+    console.log(
+      `✅ Product notification sent to ${sentCount}/${users.length} users`,
+    );
+  } catch (error) {
+    console.error("❌ Failed to send product notification:", error);
+  }
 };
 
 // ─── ADD SINGLE PRODUCT (Multiple Images) ─────────────────────────────────────
@@ -122,7 +213,7 @@ export const addSingleProduct = async (
       warranty: data.warranty || "No Warranty",
       stockQuantity: data.stockQuantity,
       minOrderQuantity: data.minOrderQuantity,
-      maxOrderQuantity: data.maxOrderQuantity || null, // ✅ NEW
+      maxOrderQuantity: data.maxOrderQuantity || null,
       description: data.description,
       specifications: data.specifications || new Map(),
       images,
@@ -132,6 +223,19 @@ export const addSingleProduct = async (
     });
 
     await product.save();
+
+    // 🔔 Send push notification to all customers
+    notifyNewProducts(
+      [
+        {
+          _id: product._id as mongoose.Types.ObjectId,
+          name: product.name,
+          sellingPrice: product.sellingPrice,
+        },
+      ],
+      false, // isBulk = false for single product
+    ).catch((err) => console.error("Single product notification failed:", err));
+
     sendSuccess(res, "Product added successfully", product, 201);
   } catch (error) {
     next(error);
@@ -178,6 +282,7 @@ export const bulkUploadProducts = async (
       data: Record<string, string>;
       errors: unknown;
     }[] = [];
+
     function sanitizeRow(row: Record<string, string>): Record<string, string> {
       const out: Record<string, string> = {};
       for (const [key, value] of Object.entries(row)) {
@@ -201,8 +306,9 @@ export const bulkUploadProducts = async (
       }
       return out;
     }
+
     for (let i = 0; i < rawRows.length; i++) {
-      const row = sanitizeRow(rawRows[i]); // ← add this
+      const row = sanitizeRow(rawRows[i]);
       const result = csvRowSchema.safeParse(row);
       if (!result.success) {
         console.log(
@@ -228,10 +334,6 @@ export const bulkUploadProducts = async (
         }
 
         // Parse image URLs
-        // ✅ Parse image URLs - check BOTH formats:
-        // New format: image_1, image_2, ..., image_8
-        // Old format: image_urls (comma-separated)
-        // In bulkUploadProducts, change:
         const imageUrls: string[] = [];
 
         // Check image_1 through image_8
@@ -306,7 +408,7 @@ export const bulkUploadProducts = async (
           warranty: d.warranty || "No Warranty",
           stockQuantity: d.stock,
           minOrderQuantity: d.min_order_qty,
-          maxOrderQuantity: d.max_order_qty || null, // ✅ NEW
+          maxOrderQuantity: d.max_order_qty || null,
           description: d.description || undefined,
           specifications,
           images,
@@ -332,6 +434,19 @@ export const bulkUploadProducts = async (
         insertedProducts = await Product.insertMany(validProducts, {
           ordered: false, // Continue inserting even if some fail
         });
+
+        // 🔔 Send push notification for bulk upload
+        if (insertedProducts.length > 0) {
+          const productSummaries = (insertedProducts as any[]).map((p) => ({
+            _id: p._id,
+            name: p.name,
+            sellingPrice: p.sellingPrice,
+          }));
+
+          notifyNewProducts(productSummaries, true).catch((err) =>
+            console.error("Bulk upload notification failed:", err),
+          );
+        }
       } catch (insertError) {
         // Handle partial insert errors
         if (insertError instanceof mongoose.Error) {
@@ -557,14 +672,14 @@ export const updateProduct = async (
       }
       product.minOrderQuantity = q;
     }
-    // ✅ Use undefined instead of null
+    // Use undefined instead of null
     if (maxOrderQuantity !== undefined) {
       if (
         maxOrderQuantity === "" ||
         maxOrderQuantity === null ||
         maxOrderQuantity === "null"
       ) {
-        product.maxOrderQuantity = undefined; // ✅ Changed from null to undefined
+        product.maxOrderQuantity = undefined;
       } else {
         const q = parseInt(maxOrderQuantity, 10);
         if (isNaN(q) || q < 1) {
@@ -627,7 +742,7 @@ export const updateProduct = async (
     }
 
     // ═══════════════════════════════════════════
-    // ✅ IMAGE MANAGEMENT - COMPLETE REWRITE
+    // IMAGE MANAGEMENT
     // ═══════════════════════════════════════════
 
     const primaryImageId = req.body.primaryImageId;
@@ -641,7 +756,7 @@ export const updateProduct = async (
     console.log("   new image files:", imageFiles?.length || 0);
     console.log("   firstNewIsPrimary:", firstNewIsPrimary);
 
-    // ── STEP 1: Update primary image on EXISTING images ──
+    // STEP 1: Update primary image on EXISTING images
     if (primaryImageId && product.images && product.images.length > 0) {
       console.log("🔄 Setting primary image to:", primaryImageId);
 
@@ -660,7 +775,7 @@ export const updateProduct = async (
       console.log("✅ Primary image updated in existing images");
     }
 
-    // ── STEP 2: Delete images marked for removal ──
+    // STEP 2: Delete images marked for removal
     if (deletedImagesStr) {
       try {
         const deletedIds: string[] = JSON.parse(deletedImagesStr);
@@ -699,7 +814,7 @@ export const updateProduct = async (
       }
     }
 
-    // ── STEP 3: Add new uploaded images ──
+    // STEP 3: Add new uploaded images
     if (imageFiles && imageFiles.length > 0) {
       console.log(`📤 Uploading ${imageFiles.length} new images`);
 
@@ -757,7 +872,7 @@ export const updateProduct = async (
       }
     }
 
-    // ── STEP 4: Ensure at least one image is primary ──
+    // STEP 4: Ensure at least one image is primary
     if (product.images && product.images.length > 0) {
       const hasPrimary = product.images.some((img: any) => img.isPrimary);
       if (!hasPrimary) {
