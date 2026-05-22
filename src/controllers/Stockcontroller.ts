@@ -1,6 +1,71 @@
 import { Request, Response, NextFunction } from "express";
 import Product from "../models/Product";
+import StockAlert from "../models/StockAlert";
 import { sendSuccess, sendError } from "../utils/response";
+import { sendPushNotification } from "../utils/pushNotification";
+
+// ─── Helper: Send stock alerts when product is restocked ──────────────────────
+const sendStockAlerts = async (
+  productId: string,
+  newQuantity: number,
+): Promise<void> => {
+  try {
+    // Only send if stock is actually available (from 0 to positive)
+    if (newQuantity <= 0) return;
+
+    // Find all pending alerts for this product
+    const alerts = await StockAlert.find({
+      product: productId,
+      isNotified: false,
+    }).populate("user", "_id phone profile.contactName");
+
+    if (alerts.length === 0) {
+      console.log(`ℹ️ No pending alerts for product ${productId}`);
+      return;
+    }
+
+    const product = await Product.findById(productId).select(
+      "name sellingPrice images",
+    );
+    if (!product) return;
+
+    console.log(
+      `🔔 Sending back-in-stock alerts for "${product.name}" to ${alerts.length} users`,
+    );
+
+    let sentCount = 0;
+    for (const alert of alerts) {
+      try {
+        await sendPushNotification(
+          alert.user._id.toString(),
+          "📦 Back in Stock!",
+          `${product.name} is now available at ₹${product.sellingPrice}. Stock: ${newQuantity} units. Order now!`,
+          {
+            type: "back_in_stock",
+            screen: `/product/${productId}`,
+            productId: productId,
+            productName: product.name,
+            price: String(product.sellingPrice),
+            stock: String(newQuantity),
+          },
+        );
+
+        // Mark as notified
+        alert.isNotified = true;
+        await alert.save();
+        sentCount++;
+      } catch (err) {
+        console.error(`Failed to send alert to user ${alert.user._id}:`, err);
+      }
+    }
+
+    console.log(
+      `✅ Stock alerts sent for "${product.name}" - ${sentCount}/${alerts.length} successful`,
+    );
+  } catch (error) {
+    console.error("❌ Failed to send stock alerts:", error);
+  }
+};
 
 // ─── GET STOCK STATS ───────────────────────────────────────────────────────────
 // GET /api/stocks/stats
@@ -108,6 +173,141 @@ export const getStockList = async (
   }
 };
 
+// ─── NOTIFY ME WHEN BACK IN STOCK ─────────────────────────────────────────────
+// POST /api/stocks/notify-me
+// Body: { productId: string }
+export const notifyMeWhenInStock = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user?._id;
+    if (!userId) {
+      sendError(res, "Unauthorized", undefined, 401);
+      return;
+    }
+
+    const { productId } = req.body;
+    if (!productId) {
+      sendError(res, "Product ID is required", undefined, 400);
+      return;
+    }
+
+    // Check if product exists
+    const product = await Product.findById(productId);
+    if (!product) {
+      sendError(res, "Product not found", undefined, 404);
+      return;
+    }
+
+    // Check if already subscribed
+    const existingAlert = await StockAlert.findOne({
+      user: userId,
+      product: productId,
+      isNotified: false,
+    });
+
+    if (existingAlert) {
+      sendSuccess(
+        res,
+        "You're already on the notification list for this product",
+        {
+          alertId: existingAlert._id,
+          productName: product.name,
+        },
+      );
+      return;
+    }
+
+    // Create new alert
+    const alert = await StockAlert.create({
+      user: userId,
+      product: productId,
+      isNotified: false,
+    });
+
+    sendSuccess(res, "You'll be notified when this product is back in stock", {
+      alertId: alert._id,
+      productName: product.name,
+      currentStock: product.stockQuantity,
+    });
+  } catch (error: any) {
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      sendSuccess(
+        res,
+        "You're already on the notification list for this product",
+      );
+      return;
+    }
+    next(error);
+  }
+};
+
+// ─── CHECK NOTIFY STATUS ──────────────────────────────────────────────────────
+// GET /api/stocks/notify-status/:productId
+export const getNotifyStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user?._id;
+    if (!userId) {
+      sendError(res, "Unauthorized", undefined, 401);
+      return;
+    }
+
+    const { productId } = req.params;
+
+    const alert = await StockAlert.findOne({
+      user: userId,
+      product: productId,
+      isNotified: false,
+    });
+
+    sendSuccess(res, "Notify status fetched", {
+      isSubscribed: !!alert,
+      alertId: alert?._id || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── UNSUBSCRIBE FROM NOTIFICATION ────────────────────────────────────────────
+// DELETE /api/stocks/notify-me/:productId
+export const unsubscribeNotify = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    const userId = (req as any).user?._id;
+    if (!userId) {
+      sendError(res, "Unauthorized", undefined, 401);
+      return;
+    }
+
+    const { productId } = req.params;
+
+    const result = await StockAlert.findOneAndDelete({
+      user: userId,
+      product: productId,
+      isNotified: false,
+    });
+
+    if (result) {
+      sendSuccess(res, "Notification subscription removed");
+    } else {
+      sendError(res, "No active subscription found", undefined, 404);
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── ADJUST QUANTITY ───────────────────────────────────────────────────────────
 // PATCH /api/stocks/:id/quantity
 // Body: { mode: "increment" | "decrement" | "set", value: number }
@@ -145,6 +345,13 @@ export const adjustQuantity = async (
     else product.stockQuantity = val;
 
     await product.save();
+
+    // 🔔 Send back-in-stock notifications if stock was 0 and now > 0
+    if (prev === 0 && product.stockQuantity > 0) {
+      sendStockAlerts(product._id.toString(), product.stockQuantity).catch(
+        (err) => console.error("Stock alert failed:", err),
+      );
+    }
 
     sendSuccess(res, "Stock quantity updated", {
       _id: product._id,
@@ -290,10 +497,23 @@ export const restockAllOOS = async (
       return;
     }
 
+    // Get the list of products that were OOS before restocking
+    const oosProducts = await Product.find(
+      { isActive: true, stockQuantity: 0 },
+      "_id",
+    ).lean();
+
     const result = await Product.updateMany(
       { isActive: true, stockQuantity: 0 },
       { $set: { stockQuantity: quantity } },
     );
+
+    // 🔔 Send alerts for each restocked product
+    for (const product of oosProducts) {
+      sendStockAlerts(product._id.toString(), quantity).catch((err) =>
+        console.error(`Stock alert failed for ${product._id}:`, err),
+      );
+    }
 
     sendSuccess(
       res,
