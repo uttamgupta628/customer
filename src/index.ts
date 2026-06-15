@@ -1,4 +1,4 @@
-import "dotenv/config"; // ← this alone is enough, keep it FIRST
+import "dotenv/config"; 
 
 import express, { Request, Response } from "express";
 import cors from "cors";

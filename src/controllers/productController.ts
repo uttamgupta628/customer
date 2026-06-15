@@ -515,7 +515,9 @@ export const getAllProducts = async (
     const limitNum = Math.min(100, parseInt(limit as string, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = { isActive: true };
+    const filter: Record<string, unknown> = {};
+if (req.query.isActive === "true") filter.isActive = true;
+else if (req.query.isActive === "false") filter.isActive = false;
     if (category) filter.category = (category as string).toLowerCase();
     if (brand) filter.brand = brand as string;
     if (featured === "true") filter.isFeatured = true;
