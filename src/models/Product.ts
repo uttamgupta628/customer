@@ -8,25 +8,26 @@ export interface IProductImage {
 }
 
 export interface IProduct extends Document {
+  sku?: string; // ✅ NEW: Unique identifier for bulk operations
   name: string;
   brand?: string;
   category: string;
   subCategory?: string;
-  type?: string; // e.g., "wired", "wireless", "bluetooth", "USB-C"
-  compatibility?: string[]; // e.g., ["iPhone 15", "Android", "Laptop"]
+  type?: string;
+  compatibility?: string[];
   sellingPrice: number;
   originalPrice?: number;
   enforceOrderLimits?: boolean;
   color?: string;
   material?: string;
-  dimensions?: string; // e.g., "10x5x2 cm"
-  weight?: string; // e.g., "150g"
-  warranty?: string; // e.g., "1 Year", "6 Months"
+  dimensions?: string;
+  weight?: string;
+  warranty?: string;
   stockQuantity: number;
   minOrderQuantity: number;
-  maxOrderQuantity?: number; // ✅ NEW: Maximum quantity a customer can order
+  maxOrderQuantity?: number;
   description?: string;
-  specifications?: Map<string, string>; // Key-value specs like {"Cable Length": "1.2m", "Connector": "USB-C"}
+  specifications?: Map<string, string>;
   images: IProductImage[];
   tags: string[];
   isFastMoving: boolean;
@@ -49,6 +50,13 @@ const ProductImageSchema = new Schema<IProductImage>(
 
 const ProductSchema = new Schema<IProduct>(
   {
+    sku: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      sparse: true, // ✅ allows null/undefined for old products, unique for new ones
+      unique: true,
+    },
     name: {
       type: String,
       required: [true, "Product name is required"],
@@ -119,10 +127,9 @@ const ProductSchema = new Schema<IProduct>(
       default: 1,
     },
     maxOrderQuantity: {
-      // ✅ NEW
       type: Number,
       min: [1, "Maximum order quantity must be at least 1"],
-      default: null, // null means no limit
+      default: null,
     },
     enforceOrderLimits: {
       type: Boolean,
@@ -176,7 +183,7 @@ const ProductSchema = new Schema<IProduct>(
   },
 );
 
-// Indexes for common queries
+// Indexes
 ProductSchema.index({ category: 1, subCategory: 1 });
 ProductSchema.index({ brand: 1 });
 ProductSchema.index({ isFeatured: 1 });
@@ -188,6 +195,8 @@ ProductSchema.index({
   tags: "text",
 });
 ProductSchema.index({ compatibility: 1 });
+// ✅ NEW: compound index for bulk-delete matching (old products without sku)
+ProductSchema.index({ name: 1, brand: 1, category: 1 });
 
 // Virtual for primary image URL
 ProductSchema.virtual("primaryImage").get(function (this: IProduct) {
