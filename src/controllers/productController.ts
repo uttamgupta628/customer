@@ -3,7 +3,12 @@ import { ZodError } from "zod";
 import streamifier from "streamifier";
 import Product, { IProductImage } from "../models/Product";
 import cloudinary from "../config/cloudinary";
-import { singleProductSchema, csvRowSchema } from "../utils/validators";
+import {
+  singleProductSchema,
+  csvRowSchema,
+  csvUpdateRowSchema,
+  csvDeleteRowSchema,
+} from "../utils/validators";
 import { parseFileBuffer } from "../utils/fileParser";
 import { sendSuccess, sendError } from "../utils/response";
 import { UploadApiResponse } from "cloudinary";
@@ -62,7 +67,6 @@ const notifyNewProducts = async (
   isBulk: boolean,
 ): Promise<void> => {
   try {
-    // Get all active customers
     const users = await User.find({
       role: "customer",
       isActive: true,
@@ -78,7 +82,6 @@ const notifyNewProducts = async (
     let data: Record<string, string>;
 
     if (isBulk) {
-      // Bulk upload notification
       const productNames = products
         .slice(0, 3)
         .map((p) => p.name)
@@ -95,7 +98,6 @@ const notifyNewProducts = async (
         count: String(products.length),
       };
     } else if (products.length === 1) {
-      // Single product notification
       const product = products[0];
       title = "🆕 New Product Added!";
       body = `${product.name} is now available at ₹${product.sellingPrice}. Tap to view details!`;
@@ -108,7 +110,6 @@ const notifyNewProducts = async (
         price: String(product.sellingPrice),
       };
     } else {
-      // Fallback (shouldn't happen but just in case)
       title = "🆕 New Products Available!";
       body = `Check out our latest additions to the catalog.`;
 
@@ -119,10 +120,7 @@ const notifyNewProducts = async (
     }
 
     console.log(`📢 Sending product notification to ${users.length} users`);
-    console.log(`   Title: ${title}`);
-    console.log(`   Body: ${body}`);
 
-    // Send to all active customers
     let sentCount = 0;
     for (const user of users) {
       try {
@@ -141,7 +139,91 @@ const notifyNewProducts = async (
   }
 };
 
-// ─── ADD SINGLE PRODUCT (Multiple Images) ─────────────────────────────────────
+// ─── Helper: sanitize CSV/Excel row ──────────────────────────────────────────
+function sanitizeRow(row: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const cleaned = value
+      .trim()
+      .replace(/^[₹$€£¥\s]+/, "")
+      .replace(/^["']|["']$/g, "");
+    out[key] = cleaned;
+  }
+  for (const numField of [
+    "price",
+    "original_price",
+    "stock",
+    "min_order_qty",
+  ]) {
+    if (out[numField]) {
+      out[numField] = out[numField].replace(/,/g, "").replace(/\.00$/, "");
+    }
+  }
+  return out;
+}
+
+// ─── Helper: parse image URLs from a row ─────────────────────────────────────
+function parseImageUrls(
+  row: Record<string, string>,
+  rowIndex: number,
+): { url: string; publicId: string; isPrimary: boolean; altText: string }[] {
+  const imageUrls: string[] = [];
+
+  for (let j = 1; j <= 8; j++) {
+    const imgValue = row[`image_${j}`];
+    if (imgValue && String(imgValue).trim()) {
+      const url = String(imgValue).trim();
+      if (isGoogleDriveUrl(url)) {
+        const converted = convertToDirectImageUrl(url);
+        if (converted) imageUrls.push(converted);
+        else console.warn(`⚠️ Failed to convert Google Drive URL: ${url}`);
+      } else {
+        imageUrls.push(url);
+      }
+    }
+  }
+
+  if (imageUrls.length === 0 && row["image_urls"]) {
+    String(row["image_urls"])
+      .split(",")
+      .map((u) => u.trim())
+      .filter(Boolean)
+      .forEach((url) => {
+        if (isGoogleDriveUrl(url)) {
+          const converted = convertToDirectImageUrl(url);
+          if (converted) imageUrls.push(converted);
+        } else {
+          imageUrls.push(url);
+        }
+      });
+  }
+
+  return imageUrls.map((url, index) => ({
+    url,
+    publicId: `bulk_${Date.now()}_${rowIndex}_${index}`,
+    isPrimary: index === 0,
+    altText: `Image ${index + 1}`,
+  }));
+}
+
+// ─── Helper: parse specifications string to Map ───────────────────────────────
+function parseSpecifications(
+  specsStr: string | undefined,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!specsStr) return map;
+  try {
+    specsStr.split(";").forEach((pair) => {
+      const [key, value] = pair.split(":").map((s) => s.trim());
+      if (key && value) map.set(key, value);
+    });
+  } catch {
+    // skip invalid
+  }
+  return map;
+}
+
+// ─── ADD SINGLE PRODUCT ────────────────────────────────────────────────────────
 // POST /api/products/single
 export const addSingleProduct = async (
   req: Request,
@@ -161,7 +243,6 @@ export const addSingleProduct = async (
 
     const data = parseResult.data;
 
-    // Handle multiple image uploads
     const imageFiles = req.files as Express.Multer.File[] | undefined;
     const images: IProductImage[] = [];
 
@@ -180,7 +261,7 @@ export const addSingleProduct = async (
           return {
             url: cloudResult.secure_url,
             publicId: cloudResult.public_id,
-            isPrimary: index === 0, // First image is primary
+            isPrimary: index === 0,
             altText: `${data.name} - Image ${index + 1}`,
           };
         });
@@ -198,6 +279,7 @@ export const addSingleProduct = async (
     }
 
     const product = new Product({
+      sku: data.sku || undefined, // ✅ NEW
       name: data.name,
       brand: data.brand,
       category: data.category,
@@ -224,7 +306,6 @@ export const addSingleProduct = async (
 
     await product.save();
 
-    // 🔔 Send push notification to all customers
     notifyNewProducts(
       [
         {
@@ -233,7 +314,7 @@ export const addSingleProduct = async (
           sellingPrice: product.sellingPrice,
         },
       ],
-      false, // isBulk = false for single product
+      false,
     ).catch((err) => console.error("Single product notification failed:", err));
 
     sendSuccess(res, "Product added successfully", product, 201);
@@ -283,111 +364,16 @@ export const bulkUploadProducts = async (
       errors: unknown;
     }[] = [];
 
-    function sanitizeRow(row: Record<string, string>): Record<string, string> {
-      const out: Record<string, string> = {};
-      for (const [key, value] of Object.entries(row)) {
-        // Strip currency symbols, commas in numbers (e.g. "1,499" → "1499")
-        const cleaned = value
-          .trim()
-          .replace(/^[₹$€£¥\s]+/, "") // leading currency symbols
-          .replace(/^["']|["']$/g, ""); // stray surrounding quotes
-        out[key] = cleaned;
-      }
-      // Normalize numeric fields specifically — remove thousand separators
-      for (const numField of [
-        "price",
-        "original_price",
-        "stock",
-        "min_order_qty",
-      ]) {
-        if (out[numField]) {
-          out[numField] = out[numField].replace(/,/g, "").replace(/\.00$/, "");
-        }
-      }
-      return out;
-    }
-
     for (let i = 0; i < rawRows.length; i++) {
       const row = sanitizeRow(rawRows[i]);
       const result = csvRowSchema.safeParse(row);
-      if (!result.success) {
-        console.log(
-          `Row ${i + 2} failed:`,
-          JSON.stringify(result.error.flatten().fieldErrors),
-        );
-        console.log(`Row ${i + 2} raw data:`, JSON.stringify(row));
-      }
+
       if (result.success) {
         const d = result.data;
-
-        // Parse specifications string to Map
-        let specifications = new Map<string, string>();
-        if (d.specifications) {
-          try {
-            d.specifications.split(";").forEach((pair) => {
-              const [key, value] = pair.split(":").map((s) => s.trim());
-              if (key && value) specifications.set(key, value);
-            });
-          } catch {
-            // Skip invalid specifications
-          }
-        }
-
-        // Parse image URLs
-        const imageUrls: string[] = [];
-
-        // Check image_1 through image_8
-        for (let j = 1; j <= 8; j++) {
-          const imgField = `image_${j}`;
-          const imgValue = row[imgField]; // Get directly from the raw row
-          if (imgValue && String(imgValue).trim()) {
-            const url = String(imgValue).trim();
-            // Convert Google Drive URLs to direct image URLs
-            if (isGoogleDriveUrl(url)) {
-              const converted = convertToDirectImageUrl(url);
-              if (converted) {
-                imageUrls.push(converted);
-                console.log(
-                  `🔄 Converted Google Drive URL: ${url} → ${converted}`,
-                );
-              } else {
-                console.warn(`⚠️ Failed to convert Google Drive URL: ${url}`);
-              }
-            } else {
-              imageUrls.push(url);
-            }
-          }
-        }
-
-        // Fallback to old image_urls
-        if (imageUrls.length === 0 && row["image_urls"]) {
-          const urls = String(row["image_urls"])
-            .split(",")
-            .map((url: string) => url.trim())
-            .filter(Boolean);
-
-          urls.forEach((url: string) => {
-            if (isGoogleDriveUrl(url)) {
-              const converted = convertToDirectImageUrl(url);
-              if (converted) {
-                imageUrls.push(converted);
-              }
-            } else {
-              imageUrls.push(url);
-            }
-          });
-        }
-
-        console.log(`📷 Images for row ${i + 2}:`, imageUrls);
-
-        const images = imageUrls.map((url, index) => ({
-          url,
-          publicId: `bulk_${Date.now()}_${i}_${index}`,
-          isPrimary: index === 0,
-          altText: `${d.name} - Image ${index + 1}`,
-        }));
+        const images = parseImageUrls(row, i);
 
         validProducts.push({
+          sku: d.sku || undefined, // ✅ NEW
           name: d.name,
           brand: d.brand || undefined,
           category: d.category,
@@ -410,7 +396,7 @@ export const bulkUploadProducts = async (
           minOrderQuantity: d.min_order_qty,
           maxOrderQuantity: d.max_order_qty || null,
           description: d.description || undefined,
-          specifications,
+          specifications: parseSpecifications(d.specifications),
           images,
           tags: d.tags,
           isFastMoving: d.fast_moving,
@@ -418,7 +404,7 @@ export const bulkUploadProducts = async (
         });
       } else {
         failedRows.push({
-          row: i + 2, // +2 for header row and 0-index
+          row: i + 2,
           data: row,
           errors:
             result.error instanceof ZodError
@@ -432,23 +418,20 @@ export const bulkUploadProducts = async (
     if (validProducts.length > 0) {
       try {
         insertedProducts = await Product.insertMany(validProducts, {
-          ordered: false, // Continue inserting even if some fail
+          ordered: false,
         });
 
-        // 🔔 Send push notification for bulk upload
         if (insertedProducts.length > 0) {
           const productSummaries = (insertedProducts as any[]).map((p) => ({
             _id: p._id,
             name: p.name,
             sellingPrice: p.sellingPrice,
           }));
-
           notifyNewProducts(productSummaries, true).catch((err) =>
             console.error("Bulk upload notification failed:", err),
           );
         }
       } catch (insertError) {
-        // Handle partial insert errors
         if (insertError instanceof mongoose.Error) {
           console.error("Bulk insert error:", insertError);
         }
@@ -459,8 +442,8 @@ export const bulkUploadProducts = async (
       totalRows: rawRows.length,
       successCount: insertedProducts.length,
       failedCount: failedRows.length,
-      insertedProducts: insertedProducts.slice(0, 10), // Return only first 10
-      failedRows: failedRows.slice(0, 10), // Return only first 10 errors
+      insertedProducts: insertedProducts.slice(0, 10),
+      failedRows: failedRows.slice(0, 10),
     };
 
     if (failedRows.length > 0 && insertedProducts.length === 0) {
@@ -483,6 +466,303 @@ export const bulkUploadProducts = async (
         responseData,
         201,
       );
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── BULK UPDATE PRODUCTS ──────────────────────────────────────────────────────
+// POST /api/products/bulk-update
+// Match by SKU. Only updates fields present in the sheet row.
+export const bulkUpdateProducts = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    if (!req.file) {
+      sendError(res, "No file uploaded. Please upload a CSV or Excel file.");
+      return;
+    }
+
+    let rawRows: Record<string, string>[];
+    try {
+      rawRows = parseFileBuffer(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname,
+      );
+    } catch (parseError) {
+      sendError(
+        res,
+        "Failed to parse file.",
+        parseError instanceof Error ? parseError.message : parseError,
+      );
+      return;
+    }
+
+    if (!rawRows.length) {
+      sendError(res, "File is empty or has no data rows.");
+      return;
+    }
+
+    const results = {
+      totalRows: rawRows.length,
+      updatedCount: 0,
+      skippedCount: 0, // sku not found in DB
+      failedCount: 0,
+      skippedRows: [] as { row: number; sku: string; reason: string }[],
+      failedRows: [] as {
+        row: number;
+        data: Record<string, string>;
+        errors: unknown;
+      }[],
+    };
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const row = sanitizeRow(rawRows[i]);
+      const parseResult = csvUpdateRowSchema.safeParse(row);
+
+      if (!parseResult.success) {
+        results.failedCount++;
+        results.failedRows.push({
+          row: i + 2,
+          data: row,
+          errors:
+            parseResult.error instanceof ZodError
+              ? parseResult.error.flatten().fieldErrors
+              : parseResult.error,
+        });
+        continue;
+      }
+
+      const d = parseResult.data;
+
+      // Find product by SKU
+      const product = await Product.findOne({ sku: d.sku });
+
+      if (!product) {
+        results.skippedCount++;
+        results.skippedRows.push({
+          row: i + 2,
+          sku: d.sku,
+          reason: "SKU not found in database",
+        });
+        continue;
+      }
+
+      // Build $set object — only update fields present in the row (non-empty)
+      const updateFields: Record<string, unknown> = {};
+
+      if (d.name) updateFields.name = d.name.trim();
+      if (d.brand !== undefined && d.brand !== "")
+        updateFields.brand = d.brand.trim();
+      if (d.category) updateFields.category = d.category.trim().toLowerCase();
+      if (d.sub_category !== undefined && d.sub_category !== "")
+        updateFields.subCategory = d.sub_category.trim().toLowerCase();
+      if (d.type !== undefined && d.type !== "")
+        updateFields.type = d.type.trim();
+      if (d.color !== undefined && d.color !== "")
+        updateFields.color = d.color.trim();
+      if (d.material !== undefined && d.material !== "")
+        updateFields.material = d.material.trim();
+      if (d.dimensions !== undefined && d.dimensions !== "")
+        updateFields.dimensions = d.dimensions.trim();
+      if (d.weight !== undefined && d.weight !== "")
+        updateFields.weight = d.weight.trim();
+      if (d.warranty !== undefined && d.warranty !== "")
+        updateFields.warranty = d.warranty.trim();
+      if (d.description !== undefined && d.description !== "")
+        updateFields.description = d.description.trim();
+      if (d.price !== undefined) updateFields.sellingPrice = d.price;
+      if (d.original_price !== undefined)
+        updateFields.originalPrice = d.original_price;
+      if (d.stock !== undefined) updateFields.stockQuantity = d.stock;
+      if (d.min_order_qty !== undefined)
+        updateFields.minOrderQuantity = d.min_order_qty;
+      if (d.max_order_qty !== undefined)
+        updateFields.maxOrderQuantity = d.max_order_qty;
+      if (d.fast_moving !== undefined)
+        updateFields.isFastMoving = d.fast_moving;
+      if (d.featured !== undefined) updateFields.isFeatured = d.featured;
+
+      if (d.compatibility !== undefined && d.compatibility !== "") {
+        updateFields.compatibility = d.compatibility
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
+      }
+
+      if (d.tags !== undefined && d.tags.length > 0) {
+        updateFields.tags = d.tags;
+      }
+
+      if (d.specifications !== undefined && d.specifications !== "") {
+        updateFields.specifications = parseSpecifications(d.specifications);
+      }
+
+      // Only save if there are actual changes
+      if (Object.keys(updateFields).length === 0) {
+        results.skippedCount++;
+        results.skippedRows.push({
+          row: i + 2,
+          sku: d.sku,
+          reason: "No fields to update",
+        });
+        continue;
+      }
+
+      await Product.updateOne({ sku: d.sku }, { $set: updateFields });
+      results.updatedCount++;
+    }
+
+    const message = `Bulk update complete: ${results.updatedCount} updated, ${results.skippedCount} skipped, ${results.failedCount} failed.`;
+
+    if (results.updatedCount === 0 && results.failedCount > 0) {
+      sendError(res, "All rows failed. No products updated.", results, 400);
+    } else {
+      res.status(results.failedCount > 0 ? 207 : 200).json({
+        success: true,
+        message,
+        data: {
+          ...results,
+          // Cap response size
+          skippedRows: results.skippedRows.slice(0, 20),
+          failedRows: results.failedRows.slice(0, 20),
+        },
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── BULK DELETE PRODUCTS ──────────────────────────────────────────────────────
+// POST /api/products/bulk-delete
+// Match by name + brand + category (old products have no sku)
+// Deletes Cloudinary images + removes product from DB
+export const bulkDeleteProducts = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  try {
+    if (!req.file) {
+      sendError(res, "No file uploaded. Please upload a CSV or Excel file.");
+      return;
+    }
+
+    let rawRows: Record<string, string>[];
+    try {
+      rawRows = parseFileBuffer(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname,
+      );
+    } catch (parseError) {
+      sendError(
+        res,
+        "Failed to parse file.",
+        parseError instanceof Error ? parseError.message : parseError,
+      );
+      return;
+    }
+
+    if (!rawRows.length) {
+      sendError(res, "File is empty or has no data rows.");
+      return;
+    }
+
+    const results = {
+      totalRows: rawRows.length,
+      deletedCount: 0,
+      notFoundCount: 0,
+      failedCount: 0,
+      notFoundRows: [] as {
+        row: number;
+        name: string;
+        brand: string;
+        category: string;
+      }[],
+      failedRows: [] as {
+        row: number;
+        data: Record<string, string>;
+        errors: unknown;
+      }[],
+    };
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const row = sanitizeRow(rawRows[i]);
+      const parseResult = csvDeleteRowSchema.safeParse(row);
+
+      if (!parseResult.success) {
+        results.failedCount++;
+        results.failedRows.push({
+          row: i + 2,
+          data: row,
+          errors:
+            parseResult.error instanceof ZodError
+              ? parseResult.error.flatten().fieldErrors
+              : parseResult.error,
+        });
+        continue;
+      }
+
+      const d = parseResult.data;
+
+      // Build match query — brand optional (some products may not have brand)
+      const matchQuery: Record<string, unknown> = {
+        name: { $regex: new RegExp(`^${d.name.trim()}$`, "i") }, // case-insensitive exact match
+        category: d.category.trim().toLowerCase(),
+      };
+
+      if (d.brand && d.brand.trim()) {
+        matchQuery.brand = { $regex: new RegExp(`^${d.brand.trim()}$`, "i") };
+      }
+
+      const product = await Product.findOne(matchQuery);
+
+      if (!product) {
+        results.notFoundCount++;
+        results.notFoundRows.push({
+          row: i + 2,
+          name: d.name,
+          brand: d.brand || "",
+          category: d.category,
+        });
+        continue;
+      }
+
+      // Delete Cloudinary images
+      if (product.images && product.images.length > 0) {
+        const deletePromises = product.images.map((img) =>
+          cloudinary.uploader.destroy(img.publicId).catch((err) => {
+            console.error(`Failed to delete image ${img.publicId}:`, err);
+          }),
+        );
+        await Promise.all(deletePromises);
+      }
+
+      await product.deleteOne();
+      results.deletedCount++;
+      console.log(`🗑️ Deleted: ${product.name} (${product._id})`);
+    }
+
+    const message = `Bulk delete complete: ${results.deletedCount} deleted, ${results.notFoundCount} not found, ${results.failedCount} failed.`;
+
+    if (results.deletedCount === 0 && results.failedCount > 0) {
+      sendError(res, "All rows failed. No products deleted.", results, 400);
+    } else {
+      res.status(results.failedCount > 0 ? 207 : 200).json({
+        success: true,
+        message,
+        data: {
+          ...results,
+          notFoundRows: results.notFoundRows.slice(0, 20),
+          failedRows: results.failedRows.slice(0, 20),
+        },
+      });
     }
   } catch (error) {
     next(error);
@@ -515,9 +795,7 @@ export const getAllProducts = async (
     const limitNum = Math.min(100, parseInt(limit as string, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
-if (req.query.isActive === "true") filter.isActive = true;
-else if (req.query.isActive === "false") filter.isActive = false;
+    const filter: Record<string, unknown> = { isActive: true };
     if (category) filter.category = (category as string).toLowerCase();
     if (brand) filter.brand = brand as string;
     if (featured === "true") filter.isFeatured = true;
@@ -527,7 +805,6 @@ else if (req.query.isActive === "false") filter.isActive = false;
       filter.compatibility = { $in: [compatibility as string] };
     if (search) filter.$text = { $search: search as string };
 
-    // Build sort object
     const sortObj: Record<string, 1 | -1> = {
       [sortBy as string]: order === "desc" ? -1 : 1,
     };
@@ -585,6 +862,7 @@ export const updateProduct = async (
     }
 
     const {
+      sku, // ✅ NEW
       name,
       brand,
       category,
@@ -608,7 +886,9 @@ export const updateProduct = async (
       isFeatured,
     } = req.body;
 
-    // Update text fields
+    // ✅ NEW: Update SKU if provided
+    if (sku !== undefined && sku.trim()) product.sku = sku.trim().toUpperCase();
+
     if (name !== undefined) product.name = String(name).trim();
     if (brand !== undefined) product.brand = String(brand).trim() || undefined;
     if (category !== undefined)
@@ -629,7 +909,6 @@ export const updateProduct = async (
     if (description !== undefined)
       product.description = String(description).trim() || undefined;
 
-    // Update compatibility
     if (compatibility !== undefined) {
       if (typeof compatibility === "string") {
         product.compatibility = compatibility
@@ -641,7 +920,6 @@ export const updateProduct = async (
       }
     }
 
-    // Update numeric fields
     if (sellingPrice !== undefined) {
       const p = parseFloat(sellingPrice);
       if (isNaN(p) || p < 0) {
@@ -674,7 +952,6 @@ export const updateProduct = async (
       }
       product.minOrderQuantity = q;
     }
-    // Use undefined instead of null
     if (maxOrderQuantity !== undefined) {
       if (
         maxOrderQuantity === "" ||
@@ -695,7 +972,6 @@ export const updateProduct = async (
       }
     }
 
-    // Update specifications
     if (specifications !== undefined) {
       try {
         let specsMap: Map<string, string>;
@@ -719,7 +995,6 @@ export const updateProduct = async (
       }
     }
 
-    // Update tags
     if (tags !== undefined) {
       product.tags = String(tags)
         .split(",")
@@ -727,7 +1002,6 @@ export const updateProduct = async (
         .filter(Boolean);
     }
 
-    // Update booleans
     if (isFastMoving !== undefined) {
       product.isFastMoving =
         isFastMoving === true ||
@@ -743,52 +1017,32 @@ export const updateProduct = async (
         isFeatured === "1";
     }
 
-    // ═══════════════════════════════════════════
-    // IMAGE MANAGEMENT
-    // ═══════════════════════════════════════════
-
+    // ─── IMAGE MANAGEMENT ────────────────────────────────────────────────────
     const primaryImageId = req.body.primaryImageId;
     const deletedImagesStr = req.body.deletedImages;
     const imageFiles = req.files as Express.Multer.File[] | undefined;
     const firstNewIsPrimary = req.body.firstNewIsPrimary === "true";
 
-    console.log("📷 Image update request:");
-    console.log("   primaryImageId:", primaryImageId);
-    console.log("   deletedImages:", deletedImagesStr);
-    console.log("   new image files:", imageFiles?.length || 0);
-    console.log("   firstNewIsPrimary:", firstNewIsPrimary);
-
-    // STEP 1: Update primary image on EXISTING images
     if (primaryImageId && product.images && product.images.length > 0) {
-      console.log("🔄 Setting primary image to:", primaryImageId);
-
-      // Convert Mongoose subdocuments to plain objects if needed
       const currentImages = product.images.map((img: any) =>
         img.toObject ? img.toObject() : { ...img },
       );
-
       product.images = currentImages.map((img: any) => ({
         url: img.url,
         publicId: img.publicId,
         isPrimary: img.publicId === primaryImageId,
         altText: img.altText || "",
       }));
-
-      console.log("✅ Primary image updated in existing images");
     }
 
-    // STEP 2: Delete images marked for removal
     if (deletedImagesStr) {
       try {
         const deletedIds: string[] = JSON.parse(deletedImagesStr);
-        console.log("🗑️ Deleting images:", deletedIds);
-
         if (
           deletedIds.length > 0 &&
           product.images &&
           product.images.length > 0
         ) {
-          // Delete from Cloudinary
           for (const publicId of deletedIds) {
             await cloudinary.uploader.destroy(publicId).catch((err) => {
               console.error(
@@ -797,18 +1051,11 @@ export const updateProduct = async (
               );
             });
           }
-
-          // Remove from product images array
           const currentImages = product.images.map((img: any) =>
             img.toObject ? img.toObject() : { ...img },
           );
-
           product.images = currentImages.filter(
             (img: any) => !deletedIds.includes(img.publicId),
-          );
-
-          console.log(
-            `✅ Removed ${deletedIds.length} images. Remaining: ${product.images.length}`,
           );
         }
       } catch (err) {
@@ -816,12 +1063,9 @@ export const updateProduct = async (
       }
     }
 
-    // STEP 3: Add new uploaded images
     if (imageFiles && imageFiles.length > 0) {
-      console.log(`📤 Uploading ${imageFiles.length} new images`);
-
       try {
-        const uploadPromises = imageFiles.map(async (file, index) => {
+        const uploadPromises = imageFiles.map(async (file) => {
           const cloudResult = await uploadBufferToCloudinary(
             file.buffer,
             file.originalname,
@@ -829,41 +1073,25 @@ export const updateProduct = async (
           return {
             url: cloudResult.secure_url,
             publicId: cloudResult.public_id,
-            isPrimary: false, // Will be set below if needed
+            isPrimary: false,
             altText: `${product.name} - Image ${Date.now()}`,
           };
         });
 
         const uploadedImages = await Promise.all(uploadPromises);
-
-        // Determine if new images should be primary
         const hasExistingImages = product.images && product.images.length > 0;
 
-        if (
-          !hasExistingImages &&
-          firstNewIsPrimary &&
-          uploadedImages.length > 0
-        ) {
-          // No existing images left + flag says first new should be primary
+        if (!hasExistingImages && uploadedImages.length > 0) {
           uploadedImages[0].isPrimary = true;
-          console.log("✅ First new image set as primary (no existing images)");
-        } else if (!hasExistingImages && uploadedImages.length > 0) {
-          // No existing images, first new image becomes primary automatically
+        } else if (firstNewIsPrimary && uploadedImages.length > 0) {
           uploadedImages[0].isPrimary = true;
-          console.log("✅ First new image set as primary (auto)");
         }
 
-        // Add to existing images
         const currentImages = (product.images || []).map((img: any) =>
           img.toObject ? img.toObject() : { ...img },
         );
-
         product.images = [...currentImages, ...uploadedImages];
-        console.log(
-          `✅ Added ${uploadedImages.length} new images. Total: ${product.images.length}`,
-        );
       } catch (uploadErr) {
-        // Save other changes even if image upload fails
         await product.save();
         res.status(502).json({
           success: false,
@@ -874,26 +1102,15 @@ export const updateProduct = async (
       }
     }
 
-    // STEP 4: Ensure at least one image is primary
     if (product.images && product.images.length > 0) {
       const hasPrimary = product.images.some((img: any) => img.isPrimary);
       if (!hasPrimary) {
-        console.log("⚠️ No primary image found, setting first as primary");
         const currentImages = product.images.map((img: any) =>
           img.toObject ? img.toObject() : { ...img },
         );
         currentImages[0].isPrimary = true;
         product.images = currentImages;
       }
-
-      // Log final state
-      const primary = product.images.find((img: any) => img.isPrimary);
-      console.log(
-        `📷 Final primary: ${primary?.publicId} (${product.images.length} total)`,
-      );
-      product.images.forEach((img: any, i: number) => {
-        console.log(`   [${i}] ${img.publicId} - primary: ${img.isPrimary}`);
-      });
     }
 
     await product.save();
@@ -928,7 +1145,6 @@ export const replaceProductImages = async (
       return;
     }
 
-    // Delete old images
     if (product.images && product.images.length > 0) {
       const deletePromises = product.images.map((img) =>
         cloudinary.uploader.destroy(img.publicId).catch(() => null),
@@ -936,7 +1152,6 @@ export const replaceProductImages = async (
       await Promise.all(deletePromises);
     }
 
-    // Upload new images
     try {
       const uploadPromises = imageFiles.map(async (file, index) => {
         const cloudResult = await uploadBufferToCloudinary(
@@ -971,7 +1186,7 @@ export const replaceProductImages = async (
   }
 };
 
-// ─── UPDATE STEP SIZE (Min Order Qty) ──────────────────────────────────────────
+// ─── UPDATE STEP SIZE ──────────────────────────────────────────────────────────
 // PATCH /api/products/:id/step
 export const updateStepSize = async (
   req: Request,
@@ -1006,7 +1221,7 @@ export const updateStepSize = async (
   }
 };
 
-// ─── TOGGLE PRODUCT STATUS (soft delete / restore) ────────────────────────────
+// ─── TOGGLE PRODUCT STATUS ────────────────────────────────────────────────────
 // PATCH /api/products/:id/status
 export const toggleProductStatus = async (
   req: Request,
@@ -1053,7 +1268,6 @@ export const deleteProduct = async (
       return;
     }
 
-    // Delete all images from Cloudinary
     if (product.images && product.images.length > 0) {
       const deletePromises = product.images.map((img) =>
         cloudinary.uploader.destroy(img.publicId).catch(() => null),

@@ -8,11 +8,13 @@ import {
 import {
   addSingleProduct,
   bulkUploadProducts,
+  bulkUpdateProducts,
+  bulkDeleteProducts,
   getAllProducts,
   getProductById,
   updateProduct,
   updateStepSize,
-  replaceProductImages, // Changed from replaceProductImage to replaceProductImages
+  replaceProductImages,
   toggleProductStatus,
   deleteProduct,
 } from "../controllers/productController";
@@ -48,6 +50,20 @@ router.post(
   "/bulk",
   handleUpload(uploadBulkFile as RequestHandler),
   bulkUploadProducts,
+);
+
+// POST /api/products/bulk-update - Bulk update by SKU via CSV/Excel file
+router.post(
+  "/bulk-update",
+  handleUpload(uploadBulkFile as RequestHandler),
+  bulkUpdateProducts,
+);
+
+// POST /api/products/bulk-delete - Bulk delete via CSV/Excel file
+router.post(
+  "/bulk-delete",
+  handleUpload(uploadBulkFile as RequestHandler),
+  bulkDeleteProducts,
 );
 
 // GET /api/products - Get all products with filtering and pagination

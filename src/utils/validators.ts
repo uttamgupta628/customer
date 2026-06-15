@@ -86,6 +86,7 @@ export const COMPATIBILITY_OPTIONS = [
 
 // ─── Single Product Schema ─────────────────────────────────────────────────────
 export const singleProductSchema = z.object({
+  sku: z.string().trim().toUpperCase().optional(), // ✅ NEW
   name: z.string().min(1, "Product name is required").max(200),
   brand: z.string().optional(),
   category: z.string().min(1, "Category is required"),
@@ -139,7 +140,7 @@ export const singleProductSchema = z.object({
     .refine((v) => !isNaN(v) && v >= 1, "Min order quantity must be at least 1")
     .optional()
     .default(1),
-  maxOrderQuantity: z // ✅ NEW
+  maxOrderQuantity: z
     .string()
     .or(z.number())
     .transform((v) => parseInt(String(v), 10))
@@ -161,7 +162,6 @@ export const singleProductSchema = z.object({
         });
         return map;
       } catch {
-        // Try semicolon format: "key1:value1;key2:value2"
         const map = new Map<string, string>();
         v.split(";").forEach((pair) => {
           const [key, value] = pair.split(":").map((s) => s.trim());
@@ -195,8 +195,9 @@ export const singleProductSchema = z.object({
     .default(false),
 });
 
-// ─── CSV Row Schema (for bulk upload) ─────────────────────────────────────────
+// ─── CSV Row Schema (for bulk INSERT) ─────────────────────────────────────────
 export const csvRowSchema = z.object({
+  sku: z.string().trim().toUpperCase().optional().default(""), // ✅ NEW
   name: z.string().min(1, "name is required"),
   brand: z.string().optional().default(""),
   category: z.string().min(1, "category is required"),
@@ -218,13 +219,13 @@ export const csvRowSchema = z.object({
   warranty: z.string().optional().default("No Warranty"),
   description: z.string().optional().default(""),
   specifications: z.string().optional().default(""),
-  image_urls: z.string().optional().default(""), // Comma-separated URLs
+  image_urls: z.string().optional().default(""),
   min_order_qty: z
     .string()
     .optional()
     .transform((v) => (v ? parseInt(v, 10) : 1))
     .default("1"),
-  max_order_qty: z // ✅ NEW
+  max_order_qty: z
     .string()
     .optional()
     .transform((v) => (v ? parseInt(v, 10) : null))
@@ -262,5 +263,91 @@ export const csvRowSchema = z.object({
     .default(""),
 });
 
+// ─── CSV Row Schema for Bulk UPDATE ──────────────────────────────────────────
+// sku is required here — it's the lookup key
+// all other fields optional — only provided fields get updated
+export const csvUpdateRowSchema = z.object({
+  sku: z
+    .string()
+    .min(1, "sku is required for bulk update")
+    .trim()
+    .toUpperCase(),
+  name: z.string().min(1).max(200).optional(),
+  brand: z.string().optional(),
+  category: z.string().optional(),
+  sub_category: z.string().optional(),
+  type: z.string().optional(),
+  compatibility: z.string().optional(),
+  price: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseFloat(v) : undefined))
+    .refine(
+      (v) => v === undefined || (!isNaN(v) && v >= 0),
+      "price must be a valid number",
+    ),
+  original_price: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseFloat(v) : undefined)),
+  color: z.string().optional(),
+  material: z.string().optional(),
+  dimensions: z.string().optional(),
+  weight: z.string().optional(),
+  warranty: z.string().optional(),
+  description: z.string().optional(),
+  specifications: z.string().optional(),
+  min_order_qty: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : undefined)),
+  max_order_qty: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : undefined)),
+  fast_moving: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v ? v.toLowerCase() === "yes" || v.toLowerCase() === "true" : undefined,
+    ),
+  featured: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v ? v.toLowerCase() === "yes" || v.toLowerCase() === "true" : undefined,
+    ),
+  stock: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : undefined))
+    .refine(
+      (v) => v === undefined || (!isNaN(v) && v >= 0),
+      "stock must be a valid non-negative integer",
+    ),
+  tags: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v
+        ? v
+            .replace(/['"]/g, "")
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : undefined,
+    ),
+});
+
+// ─── CSV Row Schema for Bulk DELETE ──────────────────────────────────────────
+// Match by name + brand + category (old products have no sku)
+export const csvDeleteRowSchema = z.object({
+  name: z.string().min(1, "name is required for bulk delete"),
+  brand: z.string().optional().default(""),
+  category: z.string().min(1, "category is required for bulk delete"),
+});
+
 export type SingleProductInput = z.infer<typeof singleProductSchema>;
 export type CsvRowInput = z.infer<typeof csvRowSchema>;
+export type CsvUpdateRowInput = z.infer<typeof csvUpdateRowSchema>;
+export type CsvDeleteRowInput = z.infer<typeof csvDeleteRowSchema>;
