@@ -264,3 +264,64 @@ This is an automated notification.
     // Don't throw - email failure shouldn't break the registration flow
   }
 };
+
+export const sendOtpEmail = async (email: string, otp: string): Promise<void> => {
+  if (!SENDGRID_API_KEY) {
+    console.warn("[SendGrid] API key not configured. Skipping OTP email.");
+    return;
+  }
+
+  const htmlTemplate = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Your Verification Code</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f4f4f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f9; padding: 20px;">
+        <tr>
+          <td align="center">
+            <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.08);">
+              <!-- Header -->
+              <tr>
+                <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px 40px; text-align: center;">
+                  <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700;">Verification Code</h1>
+                </td>
+              </tr>
+              <!-- Content -->
+              <tr>
+                <td style="padding: 32px 40px; text-align: center;">
+                  <p style="color: #333; font-size: 16px; line-height: 1.5; margin-bottom: 24px;">Please use the following verification code to log in to your account. This code is valid for 5 minutes.</p>
+                  <div style="background-color: #f8f9ff; border: 1px solid #e8eaff; border-radius: 8px; display: inline-block; padding: 16px 40px; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #764ba2; margin-bottom: 24px;">
+                    ${otp}
+                  </div>
+                  <p style="color: #999; font-size: 13px; margin: 0;">If you did not request this verification code, please ignore this email.</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  const textVersion = `Your verification code is ${otp}. Valid for 5 minutes.`;
+
+  const msg = {
+    to: email.trim().toLowerCase(),
+    from: SENDGRID_FROM_EMAIL,
+    subject: `Your Verification Code - ${otp}`,
+    text: textVersion,
+    html: htmlTemplate,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`[SendGrid] OTP email sent to ${email}`);
+  } catch (error) {
+    console.error("[SendGrid] Failed to send OTP email:", error);
+    throw new Error("Failed to send OTP email. Please check your email address.");
+  }
+};

@@ -30,9 +30,11 @@ interface IPushToken {
 
 interface IUser extends Document {
   // Auth
-  phone: string;
-  countryCode: string;
-  isPhoneVerified: boolean;
+  email: string;
+  isEmailVerified: boolean;
+  phone?: string;
+  countryCode?: string;
+  isPhoneVerified?: boolean;
 
   // Role
   role: "customer" | "admin";
@@ -98,10 +100,20 @@ const FCMTokenSchema = new Schema<IFCMToken>(
 const UserSchema = new mongoose.Schema<IUser>(
   {
     // ── Auth ──────────────────────────────────────────
-    phone: {
+    email: {
       type: String,
       required: true,
       unique: true,
+      trim: true,
+      lowercase: true,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    phone: {
+      type: String,
+      required: false,
       trim: true,
       match: [/^\d{10}$/, "Phone must be 10 digits"],
     },
@@ -237,6 +249,7 @@ UserSchema.methods.addFCMToken = async function (
 };
 
 // ── Indexes ──────────────────────────────────────────────────────────────────
+UserSchema.index({ email: 1 });
 UserSchema.index({ phone: 1 });
 UserSchema.index({ "profile.gstNumber": 1 }, { sparse: true });
 UserSchema.index({ "fcmTokens.token": 1 });

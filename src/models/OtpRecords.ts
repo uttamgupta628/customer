@@ -2,7 +2,7 @@ import mongoose, { Model, Schema, Document } from "mongoose";
 
 // ─── Interface ───────────────────────────────────────────────────────────────
 interface IOtpRecord extends Document {
-  phone: string;
+  email: string;
   otp: string;
   expiresAt: Date;
   attempts: number;
@@ -13,10 +13,11 @@ interface IOtpRecord extends Document {
 // ─── Schema Definition ──────────────────────────────────────────────────────
 const OtpSchema = new Schema<IOtpRecord>(
   {
-    phone: {
+    email: {
       type: String,
       required: true,
       trim: true,
+      lowercase: true,
     },
     otp: {
       type: String,
@@ -48,7 +49,7 @@ const OtpSchema = new Schema<IOtpRecord>(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
-OtpSchema.index({ phone: 1 });
+OtpSchema.index({ email: 1 });
 
 // ─── Create and Export Model ─────────────────────────────────────────────────
 const OtpRecord: Model<IOtpRecord> = mongoose.model<IOtpRecord>(

@@ -1,13 +1,13 @@
 import jwt from "jsonwebtoken";
 import User from "../models/Users";
 import OtpRecord from "../models/OtpRecords";
+import admin from "../utils/firebaseAdmin";
 import {
   generateOtp,
   isGstValid,
   resolveApprovalStatus,
-  sendOtp,
 } from "../utils/otpUtils";
-import { sendNewRegistrationEmail } from "../utils/sendgrid";
+import { sendNewRegistrationEmail, sendOtpEmail } from "../utils/sendgrid";
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 
@@ -15,28 +15,30 @@ import { Types } from "mongoose";
 interface CustomRequest extends Request {
   user?: {
     _id: Types.ObjectId;
-    phone: string;
+    email: string;
+    phone?: string;
     role: string;
     isProfileComplete: boolean;
     approvalStatus: string;
   };
 }
 
-interface CheckPhoneQuery {
-  phone?: string;
+interface CheckEmailQuery {
+  email?: string;
 }
 
 interface SendOtpBody {
-  phone?: string;
+  email?: string;
 }
 
 interface VerifyOtpBody {
-  phone?: string;
+  email?: string;
   otp?: string;
 }
 
 interface CompleteProfileBody {
   contactName?: string;
+  phone?: string;
   addressLine1?: string;
   addressLine2?: string;
   city?: string;
@@ -49,6 +51,7 @@ interface CompleteProfileBody {
 
 interface UpdateProfileBody {
   contactName?: string;
+  phone?: string;
   addressLine1?: string;
   addressLine2?: string;
   city?: string;
@@ -81,12 +84,13 @@ interface UserProfile {
 
 interface UserDocument {
   _id: Types.ObjectId;
-  phone: string;
+  email: string;
+  phone?: string;
   role: string;
   isProfileComplete: boolean;
   approvalStatus: string;
   profile: UserProfile;
-  isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   save(): Promise<UserDocument>;
 }
 
@@ -106,26 +110,25 @@ const signToken = (userId: Types.ObjectId): string => {
   } as jwt.SignOptions);
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// [1] CHECK PHONE REGISTRATION
-// GET /auth/check-phone?phone=9876543210
+// [1] CHECK EMAIL REGISTRATION
+// GET /auth/check-email?email=user@example.com
 // Used by the signup screen to show "registered / not registered" banner
 // ─────────────────────────────────────────────────────────────────────────────
-const checkPhone = async (
-  req: Request<{}, {}, {}, CheckPhoneQuery>,
+const checkEmail = async (
+  req: Request<{}, {}, {}, CheckEmailQuery>,
   res: Response,
 ): Promise<Response> => {
   try {
-    const { phone } = req.query;
+    const { email } = req.query;
 
-    if (!phone || !/^\d{10}$/.test(phone)) {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid phone number. Must be 10 digits.",
+        message: "Invalid email address.",
       });
     }
 
-    const user = await User.findOne({ phone });
+    const user = await User.findOne({ email: email.toLowerCase() });
 
     return res.status(200).json({
       success: true,
@@ -133,15 +136,15 @@ const checkPhone = async (
       isProfileComplete: user ? user.isProfileComplete : false,
     });
   } catch (err) {
-    console.error("[checkPhone]", err);
+    console.error("[checkEmail]", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// [2] SEND OTP
+// [2] SEND OTP VIA EMAIL
 // POST /auth/send-otp
-// Body: { phone: "9876543210" }
+// Body: { email: "user@example.com" }
 // Works for both Login (existing user) and Signup (new user)
 // ─────────────────────────────────────────────────────────────────────────────
 const sendOtpHandler = async (
@@ -149,18 +152,20 @@ const sendOtpHandler = async (
   res: Response,
 ): Promise<Response> => {
   try {
-    const { phone } = req.body;
+    const { email } = req.body;
 
-    if (!phone || !/^\d{10}$/.test(phone)) {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid phone number. Must be 10 digits.",
+        message: "Invalid email address.",
       });
     }
 
+    const emailLower = email.toLowerCase();
+
     // ── Resend cooldown: check if a recent OTP was already sent ──
     const recentOtp = await OtpRecord.findOne({
-      phone,
+      email: emailLower,
       isUsed: false,
       createdAt: {
         $gte: new Date(Date.now() - RESEND_COOLDOWN_SECONDS * 1000),
@@ -181,8 +186,8 @@ const sendOtpHandler = async (
       });
     }
 
-    // ── Invalidate any existing unused OTPs for this phone ──
-    await OtpRecord.updateMany({ phone, isUsed: false }, { isUsed: true });
+    // ── Invalidate any existing unused OTPs for this email ──
+    await OtpRecord.updateMany({ email: emailLower, isUsed: false }, { isUsed: true });
 
     // ── Generate new OTP ──
     const otp: string = generateOtp();
@@ -190,14 +195,22 @@ const sendOtpHandler = async (
       Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000,
     );
 
-    await OtpRecord.create({ phone, otp, expiresAt });
+    await OtpRecord.create({ email: emailLower, otp, expiresAt });
 
-    // ── Send OTP (mock for now) ──
-    await sendOtp(phone, otp);
+    // ── Send OTP via SendGrid ──
+    try {
+      await sendOtpEmail(emailLower, otp);
+    } catch (emailErr: any) {
+      console.warn("[SendGrid Warning] Failed to send OTP email:", emailErr.message);
+      if (process.env.NODE_ENV !== "development") {
+        // Rethrow the error in production so the request fails
+        throw emailErr;
+      }
+    }
 
     const responseData: any = {
       success: true,
-      message: `OTP sent to +91${phone}`,
+      message: `OTP sent to ${emailLower}`,
     };
 
     // ⚠️  REMOVE THIS IN PRODUCTION — only for dev/testing
@@ -206,16 +219,16 @@ const sendOtpHandler = async (
     }
 
     return res.status(200).json(responseData);
-  } catch (err) {
+  } catch (err: any) {
     console.error("[sendOtp]", err);
-    return res.status(500).json({ success: false, message: "Server error." });
+    return res.status(500).json({ success: false, message: err.message || "Server error." });
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// [3] VERIFY OTP
+// [3] VERIFY OTP VIA EMAIL
 // POST /auth/verify-otp
-// Body: { phone: "9876543210", otp: "123456" }
+// Body: { email: "user@example.com", otp: "123456" }
 // Returns JWT token. Creates user record if first time.
 // ─────────────────────────────────────────────────────────────────────────────
 const verifyOtpHandler = async (
@@ -223,19 +236,19 @@ const verifyOtpHandler = async (
   res: Response,
 ): Promise<Response> => {
   try {
-    const { phone, otp } = req.body;
+    const { email, otp } = req.body;
 
-    if (!phone || !otp) {
+    if (!email || !otp) {
       return res.status(400).json({
         success: false,
-        message: "Phone and OTP are required.",
+        message: "Email and OTP are required.",
       });
     }
 
-    if (!/^\d{10}$/.test(phone)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res
         .status(400)
-        .json({ success: false, message: "Invalid phone number." });
+        .json({ success: false, message: "Invalid email address." });
     }
 
     if (!/^\d{6}$/.test(otp)) {
@@ -244,9 +257,11 @@ const verifyOtpHandler = async (
         .json({ success: false, message: "OTP must be 6 digits." });
     }
 
+    const emailLower = email.toLowerCase();
+
     // ── Find latest valid OTP record ──
     const otpRecord = await OtpRecord.findOne({
-      phone,
+      email: emailLower,
       isUsed: false,
       expiresAt: { $gt: new Date() },
     }).sort({ createdAt: -1 });
@@ -286,14 +301,14 @@ const verifyOtpHandler = async (
     await OtpRecord.findByIdAndUpdate(otpRecord._id, { isUsed: true });
 
     // ── Get or create user ──
-    let user = await User.findOne({ phone });
+    let user = await User.findOne({ email: emailLower });
     let isNewUser: boolean = false;
 
     if (!user) {
-      user = await User.create({ phone, isPhoneVerified: true });
+      user = await User.create({ email: emailLower, isEmailVerified: true });
       isNewUser = true;
     } else {
-      user.isPhoneVerified = true;
+      user.isEmailVerified = true;
       await user.save();
     }
 
@@ -308,6 +323,7 @@ const verifyOtpHandler = async (
       isProfileComplete: user.isProfileComplete,
       user: {
         id: user._id,
+        email: user.email,
         phone: user.phone,
         role: user.role,
         isProfileComplete: user.isProfileComplete,
@@ -316,6 +332,88 @@ const verifyOtpHandler = async (
     });
   } catch (err) {
     console.error("[verifyOtp]", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [3.5] GOOGLE LOGIN
+// POST /auth/google
+// Body: { idToken: string }
+// Returns JWT token. Creates user record if first time.
+// ─────────────────────────────────────────────────────────────────────────────
+const googleLoginHandler = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "ID Token is required.",
+      });
+    }
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (verifyErr: any) {
+      console.error("[googleLogin] Firebase verification failed:", verifyErr);
+      return res.status(401).json({
+        success: false,
+        message: "Invalid Google / Firebase credentials.",
+      });
+    }
+
+    const { email, name } = decodedToken;
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Google account does not provide an email address.",
+      });
+    }
+
+    const emailLower = email.toLowerCase();
+    let user = await User.findOne({ email: emailLower });
+    let isNewUser: boolean = false;
+
+    if (!user) {
+      user = await User.create({
+        email: emailLower,
+        isEmailVerified: true,
+        profile: {
+          contactName: name || "",
+        },
+      });
+      isNewUser = true;
+    } else {
+      if (!user.isEmailVerified) {
+        user.isEmailVerified = true;
+        await user.save();
+      }
+    }
+
+    const token: string = signToken(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Google authentication successful.",
+      token,
+      isNewUser,
+      isProfileComplete: user.isProfileComplete,
+      user: {
+        id: user._id,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isProfileComplete: user.isProfileComplete,
+        approvalStatus: user.approvalStatus,
+      },
+    });
+  } catch (err) {
+    console.error("[googleLogin]", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
@@ -333,6 +431,7 @@ const completeProfile = async (
   try {
     const {
       contactName,
+      phone,
       addressLine1,
       addressLine2 = "",
       city,
@@ -346,6 +445,7 @@ const completeProfile = async (
     // ── Validate required fields ──
     const missing: string[] = [];
     if (!contactName?.trim()) missing.push("contactName");
+    if (!phone?.trim()) missing.push("phone");
     if (!addressLine1?.trim()) missing.push("addressLine1");
     if (!city?.trim()) missing.push("city");
     if (!state?.trim()) missing.push("state");
@@ -356,6 +456,14 @@ const completeProfile = async (
         success: false,
         message: "Required fields missing.",
         missing,
+      });
+    }
+
+    // ── Validate phone ──
+    if (!/^\d{10}$/.test(phone!.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be a 10-digit number.",
       });
     }
 
@@ -392,6 +500,7 @@ const completeProfile = async (
       req.user._id,
       {
         $set: {
+          phone: phone!.trim(),
           "profile.contactName": contactName!.trim(),
           "profile.addressLine1": addressLine1!.trim(),
           "profile.addressLine2": addressLine2.trim(),
@@ -421,7 +530,7 @@ const completeProfile = async (
 
     sendNewRegistrationEmail({
       customerName: user.profile?.contactName || "New Customer",
-      phone: user.phone,
+      phone: user.phone || "",
       city: user.profile?.city,
       state: user.profile?.state,
       gstNumber: user.profile?.gstNumber,
@@ -448,6 +557,7 @@ const completeProfile = async (
       approvalStatus,
       user: {
         id: user._id,
+        email: user.email,
         phone: user.phone,
         role: user.role,
         isProfileComplete: user.isProfileComplete,
@@ -891,9 +1001,10 @@ const getFCMTokens = async (
 };
 
 export {
-  checkPhone,
+  checkEmail,
   sendOtpHandler,
   verifyOtpHandler,
+  googleLoginHandler,
   completeProfile,
   getMe,
   updateProfile,

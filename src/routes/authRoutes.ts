@@ -1,8 +1,9 @@
 import { Router } from "express";
 import {
-  checkPhone,
+  checkEmail,
   sendOtpHandler,
   verifyOtpHandler,
+  googleLoginHandler,
   completeProfile,
   getMe,
   updateProfile,
@@ -16,9 +17,10 @@ import { protect } from "../middlewares/authMiddleware";
 const router = Router();
 
 // ── Public ────────────────────────────────────────────────────────────────────
-router.get("/check-phone", checkPhone); // GET  /auth/check-phone?phone=9876543210
+router.get("/check-email", checkEmail); // GET  /auth/check-email?email=user@example.com
 router.post("/send-otp", sendOtpHandler); // POST /auth/send-otp
 router.post("/verify-otp", verifyOtpHandler); // POST /auth/verify-otp
+router.post("/google", googleLoginHandler); // POST /auth/google
 
 // ── Protected ─────────────────────────────────────────────────────────────────
 router.post("/signup/profile", protect, completeProfile); // POST /auth/signup/profile  (first-time)
