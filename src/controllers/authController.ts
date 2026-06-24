@@ -328,6 +328,7 @@ const verifyOtpHandler = async (
         role: user.role,
         isProfileComplete: user.isProfileComplete,
         approvalStatus: user.approvalStatus,
+        profile: user.profile,
       },
     });
   } catch (err) {
@@ -410,6 +411,7 @@ const googleLoginHandler = async (
         role: user.role,
         isProfileComplete: user.isProfileComplete,
         approvalStatus: user.approvalStatus,
+        profile: user.profile,
       },
     });
   } catch (err) {
